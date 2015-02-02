@@ -8,7 +8,9 @@
             [ring.middleware.json :refer [wrap-json-response wrap-json-params wrap-json-body]]
             [compojure.core :refer :all]
             [compojure.route :as route]
-            [datomic.api :as d]))
+            [datomic.api :as d])
+  (:gen-class))
+
 
 (def current-user-id (atom 0))
 
@@ -31,11 +33,12 @@
   (route/not-found "not found"))
 
 (defn start []
+  (run-jetty (-> app wrap-json-body wrap-json-response) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false}))
+
+(defn -main []
   (database/init)
   (reset! current-user-id (rand-nth (d/q '[:find [?e ...]
                                            :where
                                            [?e :user/first-name]]
                                          (d/db (d/connect database/uri)))))
-  (run-jetty (-> app wrap-json-body wrap-json-response) {:port 8080 :daemon? true :join? false}))
-
-(start)
+  (start))
