@@ -1,0 +1,22 @@
+{
+  "name": "lending-relay",
+  "version": "0.0.1",
+  "description": "I can't wait for graphql + relay, so here is a shitty version",
+  "main": "index.js",
+  "scripts": {
+    "watch": "watchify -t [ reactify --es6 --target es5 ] app/index.js -o ../resources/public/www/js/bundle.js --verbose",
+    "build": "browserify -t [ reactify --es6 --target es5 ] app/index.js -o ../resources/public/www/js/bundle.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "browserify": "^8.1.2",
+    "immutable": "^3.6.2",
+    "object-assign": "^2.0.0",
+    "react": "^0.12.2"
+  },
+  "devDependencies": {
+    "reactify": "^1.0.0",
+    "watchify": "^2.3.0"
+  }
+}
