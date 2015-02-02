@@ -8,4 +8,6 @@
                  [overtone/at-at "1.2.0"]
                  [ring "1.3.2"]
                  [ring/ring-json "0.3.1"]
-                 [compojure "1.3.1"]])
+                 [compojure "1.3.1"]]
+  :min-lein-version "2.0.0"
+  :main lending-relay.core)
