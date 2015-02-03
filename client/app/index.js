@@ -4,60 +4,79 @@ var http = require('http');
 var assign = require('object-assign');
 var EventEmitter = require('events').EventEmitter;
 
+require('es6-promise').polyfill();
 
 var query = function (component, key) {
-	var params = component.queryParams
-	return component.queries[key](params);
+	return component.queries[key]();
+};
+
+var request = function (options, body) {
+	return new Promise(function(resolve, reject) {
+		var chunks = [];
+
+		var req = http.request(options, function (res) {
+			res.on('data', function (data) {
+				chunks.push(data);
+			}.bind(this));
+
+			res.on('end', function () {
+				resolve(chunks.join());
+			});
+		});
+
+		req.on('error', function(e) {
+			reject(e);
+		});
+
+		if (body) {
+			req.write(body);
+		}
+
+		req.end();
+	});
 };
 
 
 var Store = assign({}, EventEmitter.prototype, {
 
-	data: {},
+	data: Immutable.Map(),
 
 	fetch: function (graph) {
-		var req = http.request({
+		request({
 			method: 'POST',
 			path: '/api/graph',
 			headers: {'content-type': 'application/json'}
-		}, function (res) {
-			res.on('data', function (buf) {
-				var response = JSON.parse(buf);
-				this.data = {};
-				response.result.forEach(function (root) {
-					this.data[root[0]] = this.data[root[0]] || {};
-					if (root[0] === "viewer") {
-						this.data[root[0]][root[1]] = root[3];
-					} else if (root[0] === "node") {
-						this.data[root[0]][root[1]] = root[2];
-					}
-				}.bind(this));
-				this.emitChange();
+		}, JSON.stringify(graph)).then(function (response) {
+			var roots = Immutable.fromJS(JSON.parse(response)).get("result");
+
+			roots.forEach(function (root) {
+				var key = root.get(0);
+				var fields = root.get(1);
+
+				var type = key.get(0);
+
+				switch(type) {
+					case "viewer":
+						this.data = this.data.set("viewer", fields);
+						break;
+					case "entity":
+						var id = root.get(1);
+						this.data = this.data.updateIn(["entity", id], fields);
+						break;
+					case "node":
+						var id = root.get(1);
+						this.data = this.data.updateIn(["node", id], fields);
+						break;
+				}
+
 			}.bind(this));
+
+			this.emitChange();
 		}.bind(this));
-
-		req.write(JSON.stringify({
-			graph: [query(FriendList, "viewer").toJS()]
-		}));
-
-		req.end();
-
-		return {};
 	},
 
-	get: function (graph) {
-
-		var type = graph.get(0);
-		var id = graph.get(1);
-
-		if (this.data[type] && this.data[type][id]) {
-			var result = {};
-			result[type] = {}
-			result[type][id] = this.data[type][id];
-			return result;
-		} else {
-			return {};
-		}
+	get: function () {
+		return this.data;
 	},
 
 	emitChange: function() {
@@ -79,7 +98,10 @@ var FriendInfo = React.createClass({
 	statics: {
 		queries: {
 			user: function () {
-				return Immutable.Set.of("user/name", Immutable.List.of("user/mutual-friends", Immutable.Set.of("count")));
+				return [
+					"user/name",
+					["user/mutual-friends", ["count"]]
+				];
 			}
 		}
 	},
@@ -99,14 +121,14 @@ var ProfilePic = React.createClass({
 	statics: {
 		queries: {
 			user: function () {
-				return Immutable.Set.of("user/profile-pic");
+				return ["user/profile-pic"];
 			}
 		}
 	},
 
 	render: function () {
 		return (
-			<img className="profile-pic" src={this.props.user['user/profile-pic']} />
+			<img className="profile-pic" src={this.props.user["user/profile-pic"]} />
 		);
 	}
 });
@@ -116,16 +138,23 @@ var FriendListItem = React.createClass({
 	statics: {
 		queries: {
 			user: function () {
-				return Immutable.Set.of("user/is-verified")
-					.union(query(ProfilePic, "user"))
-					.union(query(FriendInfo, "user"))
+				return ["user/is-verified"]
+					.concat(query(ProfilePic, "user"))
+					.concat(query(FriendInfo, "user"));
 			}
 		}
 	},
 
 	render: function () {
+		var verifiedBadge;
+
+		if (this.props.user["user/is-verified"]) {
+			verifiedBadge = <div className="verified">V</div>;
+		}
+
 		return (
 			<div className="friend-list-item">
+				{verifiedBadge}
 				<ProfilePic user={this.props.user} />
 				<FriendInfo user={this.props.user} />
 			</div>
@@ -138,12 +167,15 @@ var FriendListItem = React.createClass({
 var FriendList = React.createClass({
 
 	statics: {
-		queryParams: { count: 20 },
 		queries: {
-			viewer: function (params) {
-				return Immutable.List.of("viewer", "friends", {count: params.count},
-					Immutable.Set.of("db/id")
-					.union(query(FriendListItem, "user")));
+			viewer: function () {
+				return [["user/friends",
+					[["edges",
+						[["node",
+							["db/id"].concat(query(FriendListItem, "user"))]
+						]
+					]]
+				]];
 			}
 		}
 	},
@@ -152,8 +184,8 @@ var FriendList = React.createClass({
 		return (
 			<div className="friend-list">
 			{
-				this.props.viewer.friends.map(function (user) {
-					return <FriendListItem key={user["db/id"]} user={user} />;
+				this.props.viewer["user/friends"].edges.map((edge) => {
+					return <FriendListItem key={edge.node["db/id"]} user={edge.node} />;
 				})
 			}
 			</div>
@@ -165,7 +197,11 @@ var FriendList = React.createClass({
 var FriendListContainer = React.createClass({
 
 	getInitialState: function() {
-		return  this.stateFromStore();
+		return Store.get();
+	},
+
+	shouldComponentUpdate: function (props, state) {
+		return !this.state.equals(state);
 	},
 
 	componentDidMount: function() {
@@ -176,17 +212,13 @@ var FriendListContainer = React.createClass({
 		Store.removeChangeListener(this._onChange);
 	},
 
-	stateFromStore: function () {
-		return Store.get(query(FriendList, "viewer"));
-	},
-
 	_onChange: function () {
-		this.setState(this.stateFromStore());
+		this.replaceState(Store.get());
 	},
 
 	render: function () {
-		if (this.state.viewer) {
-			return <FriendList viewer={this.state.viewer} />
+		if (this.state.has("viewer")) {
+			return <FriendList viewer={this.state.toJS().viewer} />
 		} else {
 			return <div></div>;
 		}
@@ -199,4 +231,4 @@ React.render(
 	document.getElementById('content')
 );
 
-Store.fetch(query(FriendList, "viewer"));
+Store.fetch([[["viewer"], query(FriendList, "viewer")]]);

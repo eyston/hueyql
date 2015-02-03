@@ -11,11 +11,12 @@
   "license": "ISC",
   "dependencies": {
     "browserify": "^8.1.2",
+    "es6-promise": "^2.0.1",
     "immutable": "^3.6.2",
+    "install": "^0.1.8",
+    "npm": "^2.4.1",
     "object-assign": "^2.0.0",
-    "react": "^0.12.2"
-  },
-  "devDependencies": {
+    "react": "^0.12.2",
     "reactify": "^1.0.0",
     "watchify": "^2.3.0"
   }

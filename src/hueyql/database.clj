@@ -1,4 +1,4 @@
-(ns lending-relay.database
+(ns hueyql.database
   (:require [datomic.api :as d]))
 
 (def uri "datomic:mem://users")
