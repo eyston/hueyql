@@ -37,7 +37,7 @@
 ;; (.stop @server)
 
 (defn start []
-  (run-jetty (-> app wrap-json-body wrap-json-response) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false}))
+  (run-jetty (-> app wrap-params wrap-json-body wrap-json-response) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false}))
 
 (defn -main []
   (database/init)
