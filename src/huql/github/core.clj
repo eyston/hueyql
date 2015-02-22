@@ -14,6 +14,11 @@
 
 (defonce CACHE (atom (cache/ttl-cache-factory {} :ttl 3600000)))
 
+(defn deep-merge [& vals]
+  (if (every? map? vals)
+    (apply merge-with deep-merge vals)
+    (last vals)))
+
 (defn http-get
   ([url]
    (http-get url nil))
@@ -22,7 +27,9 @@
    (let [ckey [url options]
          c (if (cache/has? @CACHE ckey)
              (swap! CACHE (fn [c] (cache/hit c ckey)))
-             (let [response (:body (client/get url (merge {:as :json :headers {"Authorization" (str "token " (env :github-token))}} options)))]
+             (let [response (:body (client/get url (deep-merge {:as :json :query-params {"client_id" (env :github-client-id)
+                                                                                         "client_secret" (env :github-client-secret)}}
+                                                               options)))]
                (swap! CACHE (fn [c] (cache/miss c ckey response)))))]
      (get c ckey))))
 
@@ -63,7 +70,11 @@
                   response))))
 
 (defn get-resources-count-d [url]
-  (d/let-flow [response (http/get url {:middleware wrap-links :headers {"User-Agent" "eyston" "Authorization" (str "token " (env :github-token))} :query-params {:per_page 1}})]
+  (d/let-flow [response (http/get url {:middleware wrap-links
+                                       :headers {"User-Agent" "HuQL"}
+                                       :query-params {:per_page 1
+                                                      "client_id" (env :github-client-id)
+                                                      "client_secret" (env :github-client-secret)}})]
               (if-let [last-page (get-in response [:links :last :href])]
                 (or (Integer/parseInt (second (re-find #"[\&\?]page=(\d+)?" last-page))) (count (:body response)))
                 (-> response
@@ -146,8 +157,11 @@
 
 (defn login->user-d [login]
   (let [url (str "https://api.github.com/users/" login)
-        org (http/get url {:headers {"User-Agent" "eyston" "Authorization" (str "token " (env :github-token))}})]
-    (d/chain org
+        user (http/get url {:headers {"User-Agent" "HuQL"}
+                            :query-params {:per_page 1
+                                           "client_id" (env :github-client-id)
+                                           "client_secret" (env :github-client-secret)}})]
+    (d/chain user
              :body
              bs/to-string
              #(json/parse-string % true)
@@ -186,7 +200,10 @@
     (->> (s/validate OrganizationSchema))))
 
 (defn url->organization-d [url]
-  (let [org (http/get url {:headers {"User-Agent" "eyston" "Authorization" (str "token " (env :github-token))}})]
+  (let [org (http/get url {:headers {"User-Agent" "HuQL"}
+                           :query-params {:per_page 1
+                                          "client_id" (env :github-client-id)
+                                          "client_secret" (env :github-client-secret)}})]
     (d/chain org
              :body
              bs/to-string
