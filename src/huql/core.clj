@@ -1,39 +1,42 @@
 (ns huql.core
   (:require [huql.graph.core :as graph]
-            [huql.graph.github]
+            [huql.graph.github :as gh]
             [ring.adapter.jetty :refer [run-jetty]]
             [ring.util.response :as resp]
             [ring.middleware.params :refer [wrap-params]]
-            [ring.middleware.json :refer [wrap-json-response wrap-json-params wrap-json-body]]
             [ring.middleware.stacktrace :refer [wrap-stacktrace]]
             [compojure.core :refer :all]
             [compojure.route :as route]
             [cheshire.core :as json])
   (:gen-class))
 
-;; sample call -- hard coded for now
-(def call {:name nil
-           :description nil
-           :email nil
-           :repositories {:count nil
-                          :filters {:first {:count 20}
-                                    :after {:cursor 4276357}}
-                          :edges {:cursor nil
-                                  :node {:id nil
-                                         :name nil
-                                         :full_name nil
-                                         :description nil
-                                         :latest_commit {:sha nil
-                                                         :author {:name nil
-                                                                  :avatar_url nil
-                                                                  :location nil}}}}}})
-
 (defroutes app
-  (GET "/api/graph" [] (resp/response (graph/execute-roots {[:organization "facebook"] call})))
+  (GET "/" [] (resp/resource-response "index.html" {:root "public/www"}))
+  (GET "/api/graph" [query profiled] (try
+                                       (let [result (if profiled
+                                                      (graph/run-profiled gh/github-graph query)
+                                                      (graph/run gh/github-graph query))]
+                                         (resp/response (json/generate-string result)))
+                                       (catch Exception e {:status 500
+                                                           :body (json/generate-string {:error (.getMessage e)})})))
+  (route/resources "/" {:root "/public/www/"})
   (route/not-found "not found"))
 
+(comment
+  (def server (atom nil))
+
+  (swap! server (fn [server]
+                  (when server
+                    (.stop server))
+                  (run-jetty (-> app wrap-params) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false})))
+
+  (swap! server (fn [server]
+                  (when server
+                    (.stop server))))
+  )
+
 (defn start []
-  (run-jetty (-> app wrap-params wrap-json-body wrap-json-response) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false}))
+  (run-jetty (-> app wrap-params) {:port (Integer. (or (System/getenv "PORT") "8080")) :join? false}))
 
 (defn -main []
   (start))

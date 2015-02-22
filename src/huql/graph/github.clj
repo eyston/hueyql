@@ -1,136 +1,129 @@
 (ns huql.graph.github
-  (:require [huql.graph.core :as graph]
-            [clojure.core.cache :as cache]
-            [clj-http.client :as client]
+  (:require [huql.github.core :as gh]
+            [huql.graph.core :as graph]
             [schema.core :as s]
-            [environ.core :refer [env]]
-            [clojure.string]
-            [clojure.set :as set]))
+            [plumbing.map :as pm]
+            [clj-time.format :as f]
+            [clj-time.core :as t]
+            [cheshire.core :as json]))
 
-(defonce CACHE (atom (cache/ttl-cache-factory {} :ttl 3600000)))
-
-(defn http-get [url]
-  (prn [:get url])
-  (get (swap! CACHE (fn [c]
-                      (if (cache/has? c url)
-                        (cache/hit c url)
-                        (cache/miss c url (:body (client/get url {:as :json :headers {"Authorization" (str "token " (env :github-token))}}))))))
-       url))
-
-(def PosInt (s/both s/Int (s/pred #(> % 0) 'positive?)))
-
-(def Organization
-  {:name s/Str
-   :description s/Str
-   :email s/Str})
-
-(def Repository
-  {:id s/Int
-   :name s/Str
-   :full_name s/Str
-   :description s/Str
-   :language s/Str
-   :watchers s/Int
-   :forks s/Int})
-
-(def Commit
-  {:sha s/Str
-   :message s/Str})
-
-(def Author
-  {:login s/Str
-   :id s/Int
-   :name s/Str
-   :avatar_url s/Str
-   :location s/Str})
-
+(def OrganizationsRoot
+  {:key :Organizations
+   :type 'Organization
+   :roots (fn [query]
+            (let [fields (:fields query)
+                  names (:args query)]
+              (into {} (map (fn [name]
+                              [name {:query fields
+                                     :input name}])))))
+   :executor gh/name->organization})
 
 (def OrganizationRoot
-  (let [author Author
-        latest-commit (-> Commit
-                        (assoc :author Author))
-        repository (-> Repository
-                     (assoc :latest_commit latest-commit))
-        repositories (graph/collection-object
-                      {:first {:count PosInt}
-                       :after {:cursor PosInt}}
-                      s/Int
-                      repository)]
-    (-> Organization
-      (assoc :repositories repositories))))
+  {:key :Organization
+   :type 'Organization
+   :roots (fn [query]
+            (let [name (first (:args query))]
+              {name name}))
+   :args (graph/tuple [s/Str 'name])
+   :executor gh/name->organization})
 
-(defn lazy-resources
-  ([url]
-   (lazy-resources url 1))
-  ([url page]
-   (lazy-seq (let [paged-url (str url (when (> page 1) (str "?page=" page)))
-                   resources (http-get paged-url)]
-               (if (seq resources)
-                 (lazy-cat resources (lazy-resources url (inc page)))
-                 resources)))))
 
-(defrecord AuthorExecutor [url]
-  graph/IExecutor
-  (execute [_ schema]
-    (http-get url)))
+(graph/defnode Organization
+  (field :login 'string :login)
+  (field :id 'integer :id)
+  (field :name 'string :name)
+  (field :repositories 'Repositories (fn [org]
+                                       {:url (:repos_url org)
+                                        :count (:public_repos org)})))
 
-(defrecord CommitAuthorExecutor [author]
-  graph/IExecutor
-  (execute [_ schema]
-    (let [required-keys (into #{} (keys schema))
-          missing-keys (set/difference required-keys (into #{} (keys author)))
-          url (:url author)]
-      (if (and (seq missing-keys) url)
-        (merge author (graph/execute (AuthorExecutor. url) schema))
-        author))))
+(def RepositoryRoot
+  {:key :Repository
+   :type 'Repository
+   :roots (fn [query]
+            (let [full-name (first (:args query))]
+              {full-name full-name}))
+   :args (graph/tuple [s/Str 'name])
+   :executor gh/full-name->repository})
 
-(defrecord LatestCommitExecutor [url]
-  graph/IExecutor
-  (execute [_ schema]
-    (let [url (clojure.string/replace url #"\{\/sha\}" "")
-          commits (http-get (str url "?per_page=1"))
-          commit (first commits)]
-      (-> commit
-        (assoc :author (CommitAuthorExecutor. (merge (:author commit) (get-in commit [:commit :author]))))))))
 
-(defrecord RepositoryExecutor [repo]
-  graph/IExecutor
-  (execute [_ schema]
-    (-> repo
-      (assoc :latest_commit (LatestCommitExecutor. (:commits_url repo))))))
+(graph/defnode Repositories
+  (field :count 'integer :count)
+  (field :edges 'RepositoryEdge (fn [rs]
+                                  (gh/url->repositories (:url rs)))
+         :cardinality :many))
 
-(defrecord RepositoriesExecutor [url count]
-  graph/IExecutor
-  (execute [_ schema]
-    (let [filters (:filters schema)]
-      {:count count
-       :filters filters
-       :edges (graph/executor (fn []
-                                (let [repos (lazy-resources url)
-                                      repos (reduce (fn [repos filter-key]
-                                                      (if-let [filter (get filters filter-key)]
-                                                        (condp = filter-key
-                                                          :first (take (:count filter) repos)
-                                                          :after (let [cursor (:cursor filter)]
-                                                                   (->> repos
-                                                                     (drop-while #(not= cursor (:id %)))
-                                                                     (drop 1))))
-                                                        repos))
-                                                    repos
-                                                    [:after :first])]
-                                  (mapv (fn [repo]
-                                          {:cursor (:id repo)
-                                           :node (RepositoryExecutor. repo)})
-                                        repos))))})))
+(graph/defnode RepositoryEdge
+  (field :cursor 'integer :id)
+  (field :node 'Repository identity))
 
-(defrecord OrganizationRootExecutor [name]
-  graph/IExecutor
-  (execute [_ schema]
-    (let [org (http-get (str "https://api.github.com/orgs/" name))]
-      (-> org
-        (assoc :repositories (RepositoriesExecutor. (:repos_url org)
-                                                    (:public_repos org)))))))
+(graph/defnode Repository
+  (field :id 'integer :id)
+  (field :name 'string :name)
+  (field :full_name 'string :full_name)
+  (field :description 'string :description)
+  (field :created_at 'DateTime :created_at))
 
-(graph/register :organization (fn [root call]
-                                (let [[_ org] root]
-                                  (graph/walk (graph/build OrganizationRoot call) (OrganizationRootExecutor. org)))))
+(graph/defnode DateTime
+  (field :month 'integer t/month)
+  (field :year 'integer t/year)
+  (field :day 'integer t/day)
+  (field :format 'string (fn [dt format-string]
+                           (let [formatter (f/formatter format-string)]
+                             (f/unparse formatter dt)))
+         :args [s/Str]))
+
+(def UserRoot
+  {:key :User
+   :type 'User
+   :roots (fn [query]
+            (let [login (first (:args query))]
+              {login login}))
+   :args (graph/tuple [s/Str 'name])
+   :executor gh/login->user-d})
+
+(def UsersRoot
+  {:key :Users
+   :type 'User
+   :roots (fn [query]
+            (let [logins (:args query)]
+              (into {} (map (fn [login]
+                              [login login])
+                            logins))))
+   :args [s/Str]
+   :executor gh/login->user-d})
+
+
+(graph/defnode User
+  (field :login 'string :login)
+  (field :id 'integer :id)
+  (field :name 'string :name)
+  (field :location 'string :location)
+  (field :created_at 'DateTime :created_at)
+  (field :updated_at 'DateTime :updated_at)
+  (field :organizations 'Organizations (fn [user]
+                                         {:url (:organizations_url user)})))
+
+(graph/defnode Organizations
+  (field :count 'integer (fn [os] (gh/get-resources-count-d (:url os))))
+  (field :edges 'OrganizationEdge (fn [os]
+                                    ;; (vec (gh/url->organizations (:url os))))
+                                    (vec (gh/url->organization-summaries (:url os))))
+         :cardinality :many))
+
+(graph/defnode OrganizationEdge
+  (field :cursor 'integer :id)
+  (field :node 'Organization (fn [summary] (gh/url->organization-d (:url summary)))))
+
+(def github-graph (-> graph/graph
+                    (graph/add-root OrganizationRoot)
+                    (graph/add-root UserRoot)
+                    (graph/add-root UsersRoot)
+                    (graph/add-node Organization)
+                    (graph/add-node Organizations)
+                    (graph/add-node OrganizationEdge)
+                    (graph/add-root RepositoryRoot)
+                    (graph/add-node Repository)
+                    (graph/add-node Repositories)
+                    (graph/add-node RepositoryEdge)
+                    (graph/add-node User)
+                    (graph/add-node DateTime)))
