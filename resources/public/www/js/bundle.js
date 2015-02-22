@@ -185,17 +185,27 @@ var QueryExplorerContainer = React.createClass({displayName: "QueryExplorerConta
 	render: function () {
 
 		return (
-			React.createElement("div", {className: "query-explorer-container"}, 
-				React.createElement("div", {className: "query-container"}, 
-					React.createElement("button", {onClick: this.handleRun}, "Run"), 
-					React.createElement("h2", null, "Query"), 
-					React.createElement("textarea", {defaultValue: this.state.query, ref: "query"})
+			React.createElement("div", null, 
+				React.createElement("header", null, 
+					React.createElement("h1", null, "GithubQL"), 
+					React.createElement("p", null, "This is just screwing around on mapping a GraphQL'ish type thing to the Github API."), 
+					React.createElement("p", null, "I have no idea if anything will work other than this default query :)"), 
+					React.createElement("p", null, "Only a few roots work and very few fields are supported on each node, including no `__type__` support."), 
+					React.createElement("p", null, "Not all requests are non-blocking at the moment which you can notice in the profile graph at the bottom.")
 				), 
-				React.createElement("div", {className: "result-container"}, 
-					React.createElement("h2", null, "Result"), 
-					React.createElement("pre", {dangerouslySetInnerHTML: {__html: this.resultHtml()}}), 
-					React.createElement("h2", null, "Profile"), 
-					React.createElement("svg", null)
+				React.createElement("div", {className: "query-explorer-container"}, 
+					React.createElement("div", {className: "query-container"}, 
+						React.createElement("button", {onClick: this.handleRun}, "Run"), 
+						React.createElement("h2", null, "Query"), 
+
+						React.createElement("textarea", {defaultValue: this.state.query, ref: "query"})
+					), 
+					React.createElement("div", {className: "result-container"}, 
+						React.createElement("h2", null, "Result"), 
+						React.createElement("pre", {dangerouslySetInnerHTML: {__html: this.resultHtml()}}), 
+						React.createElement("h2", null, "Profile"), 
+						React.createElement("svg", null)
+					)
 				)
 			)
 		);

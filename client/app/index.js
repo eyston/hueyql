@@ -184,17 +184,27 @@ var QueryExplorerContainer = React.createClass({
 	render: function () {
 
 		return (
-			<div className="query-explorer-container">
-				<div className="query-container">
-					<button onClick={this.handleRun}>Run</button>
-					<h2>Query</h2>
-					<textarea defaultValue={this.state.query} ref="query"></textarea>
-				</div>
-				<div className="result-container">
-					<h2>Result</h2>
-					<pre dangerouslySetInnerHTML={{__html: this.resultHtml()}}></pre>
-					<h2>Profile</h2>
-					<svg></svg>
+			<div>
+				<header>
+					<h1>GithubQL</h1>
+					<p>This is just screwing around on mapping a GraphQL'ish type thing to the Github API.</p>
+					<p>I have no idea if anything will work other than this default query :)</p>
+					<p>Only a few roots work and very few fields are supported on each node, including no `__type__` support.</p>
+					<p>Not all requests are non-blocking at the moment which you can notice in the profile graph at the bottom.</p>
+				</header>
+				<div className="query-explorer-container">
+					<div className="query-container">
+						<button onClick={this.handleRun}>Run</button>
+						<h2>Query</h2>
+
+						<textarea defaultValue={this.state.query} ref="query"></textarea>
+					</div>
+					<div className="result-container">
+						<h2>Result</h2>
+						<pre dangerouslySetInnerHTML={{__html: this.resultHtml()}}></pre>
+						<h2>Profile</h2>
+						<svg></svg>
+					</div>
 				</div>
 			</div>
 		);
