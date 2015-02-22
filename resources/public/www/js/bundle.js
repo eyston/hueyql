@@ -26,7 +26,7 @@ printer.json = {
 };
 
 var query =
-("Users(eyston, zpao, modocache) {\n\tid,\n\tname,\n\tlogin,\n\tcreated_at {\n\t\tyear,\n\t\tmonth,\n\t\tformat(YYYY-MM-dd)\n\t},\n\torganizations {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tlogin,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
+("Users(leebyron, zpao, modocache) {\n\tid,\n\tname,\n\tlogin,\n\tcreated_at {\n\t\tyear,\n\t\tmonth,\n\t\tformat(YYYY-MM-dd)\n\t},\n\torganizations {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tlogin,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
 
 
 
