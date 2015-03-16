@@ -1,226 +1,141 @@
 (ns huql.graph.core
-  (:require [instaparse.core :as insta]
-            [clojure.set :as set]
-            [schema.core :as s]
+  (:require [schema.core :as s]
             [schema.coerce :as coerce]
-            [manifold.deferred :as d]))
+            [manifold.deferred :as d]
+            [manifold.stream :as stream]
+            [huql.github.core :as gh]
+            [huql.github.client :as client]
+            [huql.graph.query :as query]
+            [clj-time.format :as f]
+            [clj-time.core :as t]))
 
-(def graph {:roots {} :nodes {} :edges {}})
+(defrecord FieldDefinition [name type executor cardinality args calls])
 
-(defn tuple
-  [& schema-name-pairs]
-  (->> schema-name-pairs
-    (mapv (fn [pair]
-            (if (map? pair)
-              (apply s/optional (-> pair seq first))
-              (apply s/one pair))))))
+(defrecord Node [type fields calls])
 
-(defn ->edge [opts]
-  (if-let [args-schema (:args opts)]
-    (assoc opts :parse-args (coerce/coercer args-schema coerce/string-coercion-matcher))
-    opts))
+(defrecord RootDefinition [name type executor cardinality id])
+
+(defn node-descriptor-exec [node-name graph]
+  (get-in graph [:nodes node-name]))
 
 (defmacro defnode [type & fields]
-  (list 'def type {:type `(quote ~type)
-                   :fields (into {} (map (fn [[x name type executor & opts]]
-                                           (assert (= 'field x))
-                                           (let [options (when opts (apply assoc (conj opts {})))]
-                                             [name (list `->edge (merge {:type type :executor executor :cardinality :one} options))]))
-                                         fields))}))
+  (list 'def type (map->Node (merge {:type type}
+                                    (reduce (fn [fc [x & rest]]
+                                              (condp = x
+                                                'field (let [[name type executor & opts] rest
+                                                             options (when opts (apply assoc (conj opts {})))]
+                                                         (assoc-in fc [:fields name] (map->FieldDefinition (eval (merge {:name name :type type :executor executor :cardinality :one} options)))))
+                                                'call (let [[name & opts] rest
+                                                            options (when opts (apply assoc (conj opts {})))]
+                                                        (assoc-in fc [:calls name] (eval options)))))
+                                            {:fields {:__type__ (map->FieldDefinition {:name :__type__ :type 'NodeDescriptor :executor (partial node-descriptor-exec type) :cardinality :one})}}
+                                            fields)))))
+
+(defn root [name type executor & options]
+  (map->RootDefinition (merge {:cardinality :one}
+                              {:name name :type type :executor executor}
+                              (when options (apply assoc (conj options {}))))))
 
 (defn add-node [graph node]
-  (let [type (:type node)
-        graph (assoc-in graph [:nodes type] (select-keys node [:type]))
-        graph (reduce (fn [graph [name edge]]
-                        (assoc-in graph [:edges type name] edge))
-                      graph
-                      (:fields node))]
-    graph))
+  (assoc-in graph [:nodes (:type node)] node))
 
 (defn add-root [graph root]
-  (let [key (:key root)]
-    (assoc-in graph [:roots key] (dissoc root :key))))
+  (assoc-in graph [:roots (:name root)] root))
 
-(defn field-key [field]
-  (or (:alias field) (:name field)))
+(defnode FieldDescriptor
+  (field :name 'string :name)
+  (field :description 'string :description)
+  (field :type 'string :type))
 
-(defn scalar? [graph edge]
-  (empty? (get-in graph [:edges (:type edge)])))
+(defnode NodeDescriptor
+  (field :name 'string :type)
+  (field :description 'string :description)
+  (field :fields 'FieldDescriptor (comp vals :fields)
+         :cardinality :many))
 
-(defn execute [path edge query input]
-  (let [args [input]
-        args (if-let [query-args (:args query)]
-               (concat args ((:parse-args edge) query-args))
-               args)]
-    (apply (:executor edge) args)))
-
-(defn query-key [query]
-  (or (:alias query) (:name query)))
-
-(defn query-edge [graph type query]
-  (get-in graph [:edges type (:name query)]))
-
-(defn field-edge [graph type field]
-  (get-in graph [:edges type (:name field)]))
-
-(defn field-key [field]
-  (or (:alias field) (:name field)))
-
-(declare expand)
-
-(defn expand-fields [graph executer path type fields input]
-  (let [kvs (map (fn [field]
-                   (let [edge (field-edge graph type field)]
-                     (d/chain (expand graph executer (conj path (field-key field)) edge field input)
-                              (fn [value]
-                                [(field-key field) value]))))
-                 fields)]
-    (d/chain (apply d/zip kvs) (fn [kvs]
-                                 (into {} kvs)))))
-
-(defn expand [graph executer path edge query input]
-  (let [type (:type edge)
-        value (d/chain input (partial executer path edge query))]
-    (d/chain value
-             (fn [value]
-               (if (or (nil? value) (scalar? graph edge))
-                 value
-                 (condp = (:cardinality edge)
-                   :one (let [expanded (expand-fields graph executer path type (:fields query) value)]
-                          expanded)
-                   :many (apply d/zip (map-indexed (fn [idx value]
-                                                     (expand-fields graph executer (conj path idx) type (:fields query) value))
-                                                   value))))))))
+(def graph (-> {:roots {} :nodes {}}
+             (add-node NodeDescriptor)
+             (add-node FieldDescriptor)))
 
 
-(def query-parser
-  (insta/parser "ROOT = <whitespace> NAME ARGS? FIELDS <whitespace>
-                 NAME = token
-                 ARGS = <whitespace> <'('> ARG (<','> ARG)* <')'> <whitespace>
-                 <ARG> = <whitespace> #'[^,)]+' <whitespace>
-                 FIELDS = <whitespace> <'{'> FIELD (<','> FIELD)* <'}'> <whitespace>
-                 FIELD = <whitespace> NAME(ARGS | CALLS)? <whitespace> (<'as'> <whitespace> ALIAS <whitespace>)? FIELDS? <whitespace>
-                 ALIAS = token
-                 CALLS = CALL+
-                 CALL = <'.'> NAME ARGS
-                 <token> = #'\\w+'
-                 whitespace = #'\\s*'"))
+(defn execute [graph field query value]
+  (let [args (concat [value] (:args query) (:calls query))
+        result (if (= :__type__ (:name field))
+                 ((:executor field) graph)
+                 (apply (:executor field) args))]
+    (condp = (:cardinality field)
+      :one (d/chain result)
+      :many (stream/->source result))))
 
-(def query-transform
-  (partial insta/transform {:NAME (fn [name] [:name (keyword name)])
-                            :ARGS (fn [& args] [:args (vec args)])
-                            :ALIAS (fn [alias] [:alias (keyword alias)])
-                            :CALLS (fn [& calls] [:filters (vec calls)])
-                            :CALL (fn [name args] (into {} [name args]))
-                            :FIELDS (fn [& fields] [:fields (vec fields)])
-                            :FIELD (fn [& args] (into {} args))
-                            :ROOT (fn [& args] (into {} args))}))
+(defn executor [w value path graph field query]
+  (let [value (execute field query value)]
+    (w value)))
 
-(defn parse-query [string]
-  (-> string
-    query-parser
-    query-transform))
+(defn async-walker' [f graph field query path value]
+  (if (and (seq (:fields query)) (not (nil? value)))
+    (d/let-flow [kvs (apply d/zip (map (fn [query]
+                                         (d/let-flow [field (get-in graph [:nodes (:type field) :fields (:name query)])
+                                                      value (f value (conj path (:name field)) graph field query)]
+                                                     [(or (:alias query) (:name query)) value]))
+                                       (:fields query)))]
+                (into {} kvs))
+    value))
 
-(defn root->edge [root]
-  (->edge (merge {:cardinality :one} (select-keys root [:type :executor :args]))))
+(defn async-walker [f graph field query path]
+  (fn [value]
+    (condp = (:cardinality field)
+      :one (async-walker' f graph field query path value)
+      :many (->> (stream/->source value)
+              (stream/transform (comp (map-indexed (fn [idx value]
+                                                     (async-walker' f graph field query (conj path idx) value)))))
+              (stream/buffer 50)
+              (stream/realize-each) ;; reduce seems to do this but wutevs
+              (stream/reduce conj [])))))
 
-
-(defn validate-scalar [graph edge query]
-  (when (scalar? graph edge)
-    (let [query-fields (map :name (:fields query))]
-      (when (seq query-fields)
-        (throw (Exception. (str "scalar type '" (:type edge) "' cannot have fields : " query-fields))))))
-  query)
-
-(defn validate-has-fields [graph edge query]
-  (when (not (scalar? graph edge))
-    (let [query-fields (map :name (:fields query))]
-      (when (empty? query-fields)
-        (throw (Exception. (str "non-scalar type '" (:type edge) "' must have fields."))))))
-  query)
-
-(defn validate-known-fields [graph edge query]
-  (let [type (:type edge)
-        type-fields (into #{} (keys (get-in graph [:edges type])))
-        query-fields (into #{} (map :name (:fields query)))
-        unknown-fields (set/difference query-fields type-fields)]
-    (when (seq unknown-fields)
-      (throw (Exception. (str "unknown fields for type '" type "': " unknown-fields)))))
-  query)
-
-(defn validate-args [graph edge query]
-  (let [type (:type edge)
-        query-args (:args query)
-        edge-args (:args edge)]
-    (cond
-      (and (nil? query-args) (nil? edge-args)) query
-      (nil? query-args) (throw (Exception. (str "args expected for '" type "': " (s/explain edge-args))))
-      (nil? edge-args) (throw (Exception. (str "args are not valid for '" type "' : " query-args)))
-      :else (update-in query [:args] (:parse-args edge)))))
-
-(defn validate-query [graph edge query]
-  (let [type (:type edge)
-        scalar (scalar? graph edge)
-        query (reduce (fn [query vf]
-                        (vf graph edge query))
-                      query
-                      [validate-scalar validate-has-fields validate-known-fields validate-args])]
-    (cond
-      scalar query
-      :else (update-in query [:fields] #(mapv (fn [field]
-                                                (let [edge (field-edge graph type field)]
-                                                  (validate-query graph edge field)))
-                                              %)))))
-
-(defn validate [graph query]
-  (if (insta/failure? query)
-    (throw (Exception. (pr-str (insta/get-failure query))))
-    (let [root (get-in graph [:roots (:name query)])]
-      (if root
-        (do
-          (prn [:root root :query query])
-          (validate-query graph (root->edge root) query))
-        (throw (Exception. (str "unknown root: " (name (:name query)))))))))
-
-(defn profiled-executor [data next]
-  (fn [path edge query input]
-    (let [start (/ (System/nanoTime) 1000000.0)
-          result (next path edge query input)
-          end (/ (System/nanoTime) 1000000.0)
-          duration (- end start)]
-      (d/chain result (fn [x]
-                        (let [end (/ (System/nanoTime) 1000000.0)
-                              duration (- end start)]
-                          (swap! data assoc path {:start start :end end :duration duration}))))
-      result)))
+(defn walk
+  ([executor graph query]
+   (d/let-flow [root (get-in graph [:roots (:name query)])
+                kvs (apply d/zip (map (fn [id]
+                                        (d/let-flow [value (walk executor id [id] graph root query)]
+                                                    [id value]))
+                                      (:ids query)))]
+               (into {} kvs)))
+  ([executor value path graph field query]
+   (executor (async-walker (partial walk executor)
+                           graph
+                           field
+                           query
+                           path)
+             value
+             path
+             graph
+             field
+             query)))
 
 (defn run [graph query-string]
-  (let [query (parse-query query-string)
-        query (validate graph query)
-        root (get-in graph [:roots (:name query)])
-        roots ((:roots root) query)
-        result (into {} (map (fn [[key input]]
-                               [key @(expand graph execute [key] (root->edge root) (dissoc query :args) input)])
-                             roots))]
-    result))
+  (let [query (query/parse graph query-string)]
+    (walk executor graph query)))
 
-(defn run-profiled [graph query-string]
-  (let [query (parse-query query-string)
-        query (validate graph query)
-        root (get-in graph [:roots (:name query)])
-        roots ((:roots root) query)
-        profile (atom {})
-        result @(d/chain (apply d/zip (map (fn [[key input]]
-                                             (d/chain (expand graph (profiled-executor profile execute) [key] (root->edge root) (dissoc query :args) input)
-                                                      (fn [value]
-                                                        [key value])))
-                                           roots))
-                         (partial into {}))
-        profile @profile
-        start (apply min (map (fn [[key data]] (:start data)) profile))
-        profile (map (fn [[path data]]
-                       {:path (pr-str path)
-                        :start (- (:start data) start)
-                        :end (- (:end data) start)})
-                     profile)]
-    (assoc result :profile-data profile)))
+
+(defn profiled-executor [pd]
+  (let [base (System/nanoTime)]
+    (fn [w value path graph field query]
+      (swap! pd assoc-in [path :start] (/ (- (System/nanoTime) base) 1000000.0))
+      (let [value (execute graph field query value)
+            result (w value)]
+        (condp = (:cardinality field)
+          :one (d/chain value (fn [value]
+                                (swap! pd assoc-in [path :execute] (/ (- (System/nanoTime) base) 1000000.0))))
+          :many (stream/on-drained value (fn []
+                                           (swap! pd assoc-in [path :execute] (/ (- (System/nanoTime) base) 1000000.0)))))
+        (d/chain result (fn [value]
+                          (swap! pd update-in [path :execute] #(or % (/ (- (System/nanoTime) base) 1000000.0)))
+                          (swap! pd assoc-in [path :end] (/ (- (System/nanoTime) base) 1000000.0))))
+        result))))
+
+(defn run-profiled [pkey graph query-string]
+  (let [query (query/parse graph query-string)
+        profile-data (atom {})
+        executor (profiled-executor profile-data)]
+    (d/chain (walk executor graph query)
+             #(assoc % pkey @profile-data))))

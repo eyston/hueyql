@@ -1,100 +1,34 @@
 (ns huql.github.core
-  (:require [clojure.core.cache :as cache]
-            [clj-http.client :as client]
-            [clj-http.links :as links]
-            [aleph.http :as http]
-            [byte-streams :as bs]
-            [cheshire.core :as json]
+  (:require [huql.github.client :as client]
             [manifold.deferred :as d]
+            [manifold.stream :as stream]
             [clj-time.format :as f]
             [schema.core :as s]
-            [environ.core :refer [env]]))
-
-(def LIMIT 10)
-
-(defonce CACHE (atom (cache/ttl-cache-factory {} :ttl 3600000)))
-
-(defn deep-merge [& vals]
-  (if (every? map? vals)
-    (apply merge-with deep-merge vals)
-    (last vals)))
-
-(defn http-get
-  ([url]
-   (http-get url nil))
-  ([url options]
-   (prn [:get url options])
-   (let [ckey [url options]
-         c (if (cache/has? @CACHE ckey)
-             (swap! CACHE (fn [c] (cache/hit c ckey)))
-             (let [response (:body (client/get url (deep-merge {:as :json :query-params {"client_id" (env :github-client-id)
-                                                                                         "client_secret" (env :github-client-secret)}}
-                                                               options)))]
-               (swap! CACHE (fn [c] (cache/miss c ckey response)))))]
-     (get c ckey))))
-
-(defn paged-http-get
-  ([url]
-   (paged-http-get url 1))
-  ([url page]
-   (lazy-seq (let [resources (http-get url {:query-params {"page" page}})]
-               (if (seq resources)
-                 (lazy-cat resources (paged-http-get url (inc page)))
-                 resources)))))
-
-(defn get-resource [url]
-  (http-get url))
-
-(defn get-resources [url]
-  (paged-http-get url))
-
-(defn get-resources-count [url]
-  (let [response (client/get url {:as :json :query-params {:per_page 1}})]
-    (if-let [last-page (get-in response [:links :last :href])]
-      (or (Integer/parseInt (second (re-find #"[\&\?]page=(\d+)?" last-page))) (count (:body response)))
-      (count (:body response)))))
-
-;; via https://github.com/dakrone/clj-http/blob/master/src/clj_http/links.clj -- just added let-flow
-(defn wrap-links
-  [client]
-  (fn [request]
-    (d/let-flow [response (client request)]
-                (if-let [link-headers (get-in response [:headers "link"])]
-                  (let [link-headers (if (coll? link-headers)
-                                       link-headers
-                                       [link-headers])]
-                    (assoc response
-                           :links
-                           (apply merge (for [link-header link-headers]
-                                          (links/read-link-headers link-header)))))
-                  response))))
-
-(defn get-resources-count-d [url]
-  (d/let-flow [response (http/get url {:middleware wrap-links
-                                       :headers {"User-Agent" "HuQL"}
-                                       :query-params {:per_page 1
-                                                      "client_id" (env :github-client-id)
-                                                      "client_secret" (env :github-client-secret)}})]
-              (if-let [last-page (get-in response [:links :last :href])]
-                (or (Integer/parseInt (second (re-find #"[\&\?]page=(\d+)?" last-page))) (count (:body response)))
-                (-> response
-                  :body
-                  bs/to-string
-                  (json/parse-string true)
-                  count))))
+            [schema.coerce :as coerce]
+            [schema.macros :as sm]
+            [schema.utils :as su]
+            [clojure.edn :as edn]))
 
 (def DateTime org.joda.time.DateTime)
 
+(defn string->datetime [ds]
+  (or (f/parse ds) ds))
 
-(declare url->user)
-(declare url->users)
-(declare url->organization)
-(declare url->organization-summaries)
-(declare url->organizations)
-(declare url->commit)
-(declare url->commits)
-(declare url->repository)
-(declare url->repositories)
+(def coercions (merge coerce/+string-coercions+
+                      {DateTime string->datetime}))
+
+(defn coercion-matcher [schema]
+  (or (coercions schema)
+      (coerce/keyword-enum-matcher schema)))
+
+(defn parser [schema]
+  (let [coercer (coerce/coercer schema coercion-matcher)]
+    (fn [value]
+      (let [result (coercer value)]
+        (if (su/error? result)
+          (sm/error! (su/format* "Value does not match schema: %s" (pr-str result))
+                     {:schema schema :value value :error result})
+          result)))))
 
 ;;; COMMIT
 
@@ -109,24 +43,12 @@
                s/Any s/Any}
    s/Any s/Any})
 
+(def commit-parser
+  (coerce/coercer CommitSchema coercion-matcher))
+
 (defn url->commit [url]
-  (-> (get-resource url)
-    (->> (s/validate CommitSchema))))
-
-(defn url->commits [url]
-  (->> (get-resources url)
-    (take LIMIT)
-    (map :url)
-    (map url->commit)))
-
-(defn commit-author [commit]
-  (let [url (get-in commit [:author :url])]
-    (url->user url)))
-
-(defn commit-committer [commit]
-  (let [url (get-in commit [:committer :url])]
-    (url->user url)))
-
+  (d/chain (client/resource url)
+           commit-parser))
 
 ;;; USER
 
@@ -142,43 +64,15 @@
    :updated_at DateTime
    s/Any s/Any})
 
-(defn parse-user [raw]
-  (-> raw
-    (update-in [:created_at] f/parse)
-    (update-in [:updated_at] f/parse)
-    (->> (s/validate UserSchema))))
+(def user-parser
+  (coerce/coercer UserSchema coercion-matcher))
 
 (defn url->user [url]
-  (-> (get-resource url)
-    parse-user))
+  (d/chain (client/resource url)
+           user-parser))
 
 (defn login->user [login]
   (url->user (str "https://api.github.com/users/" login)))
-
-(defn login->user-d [login]
-  (let [url (str "https://api.github.com/users/" login)
-        user (http/get url {:headers {"User-Agent" "HuQL"}
-                            :query-params {:per_page 1
-                                           "client_id" (env :github-client-id)
-                                           "client_secret" (env :github-client-secret)}})]
-    (d/chain user
-             :body
-             bs/to-string
-             #(json/parse-string % true)
-             parse-user)))
-
-(defn url->users [url]
-  (->> (get-resources url)
-    (take LIMIT)
-    (map :url)
-    (map url->user)))
-
-(defn user-organizations [user]
-  (url->organizations (:organizations_url user)))
-
-(defn user-followers [user]
-  (url->users (:followers_url user)))
-
 
 ;;; ORGANIZATION
 
@@ -193,37 +87,14 @@
    :updated_at DateTime
    s/Any s/Any})
 
-(defn url->organization [url]
-  (-> (get-resource url)
-    (update-in [:created_at] f/parse)
-    (update-in [:updated_at] f/parse)
-    (->> (s/validate OrganizationSchema))))
+(def organization-parser (parser OrganizationSchema))
 
-(defn url->organization-d [url]
-  (let [org (http/get url {:headers {"User-Agent" "HuQL"}
-                           :query-params {:per_page 1
-                                          "client_id" (env :github-client-id)
-                                          "client_secret" (env :github-client-secret)}})]
-    (d/chain org
-             :body
-             bs/to-string
-             #(json/parse-string % true))))
+(defn url->organization [url]
+  (d/chain (client/resource url)
+           organization-parser))
 
 (defn name->organization [name]
   (url->organization (str "https://api.github.com/orgs/" name)))
-
-(defn url->organization-summaries [url]
-  (->> (get-resources url)
-    (take LIMIT)))
-
-(defn url->organizations [url]
-  (->> (get-resources url)
-    (take LIMIT)
-    (map :url)
-    (map url->organization)))
-
-(defn organization-repositories [organization]
-  (url->repositories (:repos_url organization)))
 
 
 ;;; REPOSITORY
@@ -238,22 +109,12 @@
    :updated_at DateTime
    s/Any s/Any})
 
+(def repository-parser
+  (coerce/coercer RepositorySchema coercion-matcher))
+
 (defn url->repository [url]
-  (-> (get-resource url)
-    (update-in [:created_at] f/parse)
-    (update-in [:updated_at] f/parse)
-    (->> (s/validate RepositorySchema))))
+  (d/chain (client/resource url)
+           repository-parser))
 
 (defn full-name->repository [full-name]
   (url->repository (str "https://api.github.com/repos/" full-name)))
-
-(defn url->repositories [url]
-  (->> (get-resources url)
-    (take LIMIT)
-    (map :url)
-    (map url->repository)))
-
-(defn repository-commits [repository]
-  (let [rfc-url (:commits_url repository)
-        url (clojure.string/replace rfc-url #"\{\/sha\}" "")]
-    (url->commits url)))

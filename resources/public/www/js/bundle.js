@@ -26,7 +26,30 @@ printer.json = {
 };
 
 var query =
-("Users(leebyron, zpao, modocache) {\n\tid,\n\tname,\n\tlogin,\n\tcreated_at {\n\t\tyear,\n\t\tmonth,\n\t\tformat(YYYY-MM-dd)\n\t},\n\torganizations {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tlogin,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
+("Users(zpao, leebyron, modocache) {\n\tid,\n\tname,\n\tlogin,\n\tcreated_at {\n\t\tyear,\n\t\tmonth,\n\t\tformat(YYYY-MM-dd)\n\t},\n\torganizations {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tlogin,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+);
+
+var query =
+("Organizations(facebook, reactjs) {\n\t__type__ {\n\t\tname,\n\t\tdescription,\n\t\tfields {\n\t\t\tname,\n\t\t\ttype\n\t\t}\n\t},\n\tid,\n\tname,\n\trepositories.first(5) {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
+
 
 
 
@@ -141,7 +164,22 @@ var QueryExplorerContainer = React.createClass({displayName: "QueryExplorerConta
 			}
 
 			return 0;
-		})
+		});
+
+		function appendChildren(acc, path, data) {
+			var children = data.filter(function (d) {
+				return d.parent === path;
+			});
+
+			children.forEach(function (d) {
+				acc.push(d);
+				appendChildren(acc, d.path, data);
+			});
+
+			return acc;
+		}
+
+		data = appendChildren([], "[]", data);
 
 		var start = d3.min(data, function (d) { return d.start; });
 		var end = d3.max(data, function (d) { return d.end; });
@@ -163,9 +201,14 @@ var QueryExplorerContainer = React.createClass({displayName: "QueryExplorerConta
 		var barEnter = bars.enter().append('g').attr('class', 'bar');
 
 		barEnter.append('rect')
+			.attr('class', 'end')
 			.attr('transform', 'translate(200, 0)')
-			.attr('height', barHeight / 2)
-			.attr('fill', 'steelblue');
+			.attr('height', barHeight / 2);
+
+		barEnter.append('rect')
+			.attr('class', 'execute')
+			.attr('transform', 'translate(200, 0)')
+			.attr('height', barHeight / 2);
 
 		barEnter.append('text')
 			.attr('x', 0)
@@ -173,9 +216,13 @@ var QueryExplorerContainer = React.createClass({displayName: "QueryExplorerConta
 
 		bars.attr('transform', function (d, i) { return 'translate(0, ' + i * barHeight + ')'; });
 
-		bars.select('rect')
+		bars.select('rect.end')
 			.attr('x', function (d) { return x(d.start - start); })
 			.attr('width', function (d) { return d3.max([x(d.end - d.start), 1]); })
+
+		bars.select('rect.execute')
+			.attr('x', function (d) { return x(d.start - start); })
+			.attr('width', function (d) { return d3.max([x(d.execute - d.start), 1]); })
 
 		bars.select('text')
 			.text(function (d) { return d.path; })

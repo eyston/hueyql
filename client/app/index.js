@@ -25,7 +25,7 @@ printer.json = {
 };
 
 var query =
-`Users(leebyron, zpao, modocache) {
+`Users(zpao, leebyron, modocache) {
 	id,
 	name,
 	login,
@@ -40,6 +40,29 @@ var query =
 			node {
 				id,
 				login,
+				name
+			}
+		}
+	}
+}`;
+
+var query =
+`Organizations(facebook, reactjs) {
+	__type__ {
+		name,
+		description,
+		fields {
+			name,
+			type
+		}
+	},
+	id,
+	name,
+	repositories.first(5) {
+		count,
+		edges {
+			node {
+				id,
 				name
 			}
 		}
@@ -140,7 +163,22 @@ var QueryExplorerContainer = React.createClass({
 			}
 
 			return 0;
-		})
+		});
+
+		function appendChildren(acc, path, data) {
+			var children = data.filter(function (d) {
+				return d.parent === path;
+			});
+
+			children.forEach(function (d) {
+				acc.push(d);
+				appendChildren(acc, d.path, data);
+			});
+
+			return acc;
+		}
+
+		data = appendChildren([], "[]", data);
 
 		var start = d3.min(data, function (d) { return d.start; });
 		var end = d3.max(data, function (d) { return d.end; });
@@ -162,9 +200,14 @@ var QueryExplorerContainer = React.createClass({
 		var barEnter = bars.enter().append('g').attr('class', 'bar');
 
 		barEnter.append('rect')
+			.attr('class', 'end')
 			.attr('transform', 'translate(200, 0)')
-			.attr('height', barHeight / 2)
-			.attr('fill', 'steelblue');
+			.attr('height', barHeight / 2);
+
+		barEnter.append('rect')
+			.attr('class', 'execute')
+			.attr('transform', 'translate(200, 0)')
+			.attr('height', barHeight / 2);
 
 		barEnter.append('text')
 			.attr('x', 0)
@@ -172,9 +215,13 @@ var QueryExplorerContainer = React.createClass({
 
 		bars.attr('transform', function (d, i) { return 'translate(0, ' + i * barHeight + ')'; });
 
-		bars.select('rect')
+		bars.select('rect.end')
 			.attr('x', function (d) { return x(d.start - start); })
 			.attr('width', function (d) { return d3.max([x(d.end - d.start), 1]); })
+
+		bars.select('rect.execute')
+			.attr('x', function (d) { return x(d.start - start); })
+			.attr('width', function (d) { return d3.max([x(d.execute - d.start), 1]); })
 
 		bars.select('text')
 			.text(function (d) { return d.path; })

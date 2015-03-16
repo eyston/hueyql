@@ -7,15 +7,25 @@
             [ring.middleware.stacktrace :refer [wrap-stacktrace]]
             [compojure.core :refer :all]
             [compojure.route :as route]
-            [cheshire.core :as json])
+            [cheshire.core :as json]
+            [manifold.deferred :as d])
   (:gen-class))
 
 (defroutes app
   (GET "/" [] (resp/resource-response "index.html" {:root "public/www"}))
   (GET "/api/graph" [query profiled] (try
-                                       (let [result (if profiled
-                                                      (graph/run-profiled gh/github-graph query)
-                                                      (graph/run gh/github-graph query))]
+                                       (let [result @(if profiled
+                                                       (d/chain (graph/run-profiled :profile-data gh/github-graph query)
+                                                                (fn [result]
+                                                                  (update-in result [:profile-data] (partial mapv (fn [[k v]]
+                                                                                                                    (let [parent (vec (butlast k))
+                                                                                                                          parent (if (integer? (last parent))
+                                                                                                                                   (vec (butlast parent))
+                                                                                                                                   parent)]
+                                                                                                                    (assoc v
+                                                                                                                           :path (pr-str k)
+                                                                                                                           :parent (pr-str parent))))))))
+                                                       (graph/run gh/github-graph query))]
                                          (resp/response (json/generate-string result)))
                                        (catch Exception e {:status 500
                                                            :body (json/generate-string {:error (.getMessage e)})})))
