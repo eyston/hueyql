@@ -134,11 +134,16 @@
 		}
 
 		.query-container {
+            display: -webkit-flex;
+            -webkit-flex-direction: row;
+
             display: flex;
             flex-direction: row;
+
 		}
 
 		.query-container > div {
+			box-sizing: border-box;
 			padding: 10px;
 		}
 
@@ -231,7 +236,7 @@
 
 		<h3>Nested Collections</h3>
 
-		<p>So far we've only shown one to many relations.  We can also query related collections.  For example we can look at some of the contributors to the React Repository.</p>
+		<p>So far I've only shown one to many relations.  We can also query related collections.  For example we can look at some of the contributors to the React Repository.</p>
 
 		<div id="collection-query"></div>
 
