@@ -118,6 +118,12 @@
 			width: 960px;
 		}
 
+		#content > p strong {
+			margin: 15px auto;
+			width: 960px;
+			font-weight: 600;
+		}
+
 		#content > h3 {
 			margin: 20px auto;
 			width: 960px;
@@ -195,7 +201,7 @@
 
 	<div id="content">
 
-		<p>Inspired by GraphQL and making use of the wonderful Github API I decided to take a stab implementing a portion of the as-of-yet unreleased GraphQL specification.  This is a query only API and maps to just a subset of Github entities &mdash; namely Users, Organizations, Repositories, and Commits.</p>
+		<p>Inspired by <strong>GraphQL</strong> and making use of the wonderful <strong>Github API</strong> I decided to take a stab implementing a portion of the as-of-yet unreleased GraphQL specification.  This is a query only API and maps to just a subset of Github entities &mdash; namely Users, Organizations, Repositories, and Commits.</p>
 
 		<p>The server is written in Clojure and the source code can be found <a href="https://github.com/eyston/hueyql">here</a>, although it is in no condition to be used for anything other than a technology demo.  This has been a blast to write and want to thank the GraphQL team at Facebook for being so open and helpful.  I can't wait until GraphQL and Relay are out in the world.  API's will get cleaner (no more clientside concerns leaking in) and declarative data requirements will be a boon to both productivity and quality.</p>
 
@@ -231,7 +237,7 @@
 
 		<p>It might also be interesting to look at the profile tab for this query.  Click on the `PROFILE` button to view timing information for the query.  Each piece of data in the query result has timing information associated with it.  The dark blue bar is how long that particular item took to `execute` while the light blue bar is how long it took the full value &mdash; including children &mdash; to evaluate.<p>
 
-		<p>Note that every contributor was fetched in parallel.  We are using Aleph for our HTTP library as well as Manifold for our query execution.  These are two non-blocking API's for Clojure.  Collections are represented as streams and individual items in the stream as deferreds.  This means nothing in execution is blocking and the query can be traversed in parallel.<p>
+		<p>Note that every contributor was fetched in parallel.  I am using <a href="https://github.com/ztellman/aleph">Aleph</a> for the HTTP library as well as <a href="https://github.com/ztellman/manifold">Manifold</a> for the query execution (thank you Zach Tellman).  These are two non-blocking API's for Clojure.  Collections are represented as streams and individual items in the stream as deferreds.  This means nothing in execution is blocking and the query can be traversed in parallel.<p>
 
 		<p>Go ahead and bump the number up from 10 to something higher if you'd like.  I have no idea what my rate limiting is for Github but so far have yet to hit it while developing and I've made some terrible, terrible mistakes.</p>
 
