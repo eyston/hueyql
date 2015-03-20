@@ -24,27 +24,25 @@
 (defn parser [schema]
   (let [coercer (coerce/coercer schema coercion-matcher)]
     (fn [value]
-      (let [result (coercer value)]
-        (if (su/error? result)
-          (sm/error! (su/format* "Value does not match schema: %s" (pr-str result))
-                     {:schema schema :value value :error result})
-          result)))))
+      (if (nil? value) ;; let nils skip validation
+        value
+        (let [result (coercer value)]
+          (if (su/error? result)
+            (sm/error! (su/format* "Value does not match schema: %s" (pr-str result))
+                       {:schema schema :value value :error result})
+            result))))))
 
 ;;; COMMIT
 
 (def CommitSchema
-  {:sha s/Str
-   :commit {:message s/Str
-            s/Any s/Any}
-   :url s/Str
-   :author {:url s/Str
-            s/Any s/Any}
-   :committer {:url s/Str
-               s/Any s/Any}
+  {(s/optional-key :commit) {(s/optional-key :author) {(s/optional-key :date) (s/maybe DateTime)
+                                                       s/Any s/Any}
+                             (s/optional-key :committer) {(s/optional-key :date) (s/maybe DateTime)
+                                                          s/Any s/Any}
+                             s/Any s/Any}
    s/Any s/Any})
 
-(def commit-parser
-  (coerce/coercer CommitSchema coercion-matcher))
+(def commit-parser (parser CommitSchema))
 
 (defn url->commit [url]
   (d/chain (client/resource url)
@@ -53,19 +51,12 @@
 ;;; USER
 
 (def UserSchema
-  {:login s/Str
-   :id s/Int
-   (s/optional-key :name) s/Str
-   :url s/Str
-   (s/optional-key :location) (s/maybe s/Str)
-   :organizations_url s/Str
-   :followers_url s/Str
-   :created_at DateTime
-   :updated_at DateTime
+  {(s/optional-key :created_at) (s/maybe DateTime)
+   (s/optional-key :updated_at) (s/maybe DateTime)
    s/Any s/Any})
 
-(def user-parser
-  (coerce/coercer UserSchema coercion-matcher))
+(def user-parser (parser UserSchema))
+
 
 (defn url->user [url]
   (d/chain (client/resource url)
@@ -77,14 +68,8 @@
 ;;; ORGANIZATION
 
 (def OrganizationSchema
-  {:login s/Str
-   :id s/Int
-   :url s/Str
-   (s/optional-key :name) s/Str
-   :repos_url s/Str
-   :public_repos s/Int
-   :created_at DateTime
-   :updated_at DateTime
+  {(s/optional-key :created_at) (s/maybe DateTime)
+   (s/optional-key :updated_at) (s/maybe DateTime)
    s/Any s/Any})
 
 (def organization-parser (parser OrganizationSchema))
@@ -100,17 +85,12 @@
 ;;; REPOSITORY
 
 (def RepositorySchema
-  {:id s/Int
-   :name s/Str
-   :full_name s/Str
-   :description s/Str
-   :commits_url s/Str
-   :created_at DateTime
-   :updated_at DateTime
+  {(s/optional-key :created_at) (s/maybe DateTime)
+   (s/optional-key :updated_at) (s/maybe DateTime)
+   (s/optional-key :pushed_at) (s/maybe DateTime)
    s/Any s/Any})
 
-(def repository-parser
-  (coerce/coercer RepositorySchema coercion-matcher))
+(def repository-parser (parser RepositorySchema))
 
 (defn url->repository [url]
   (d/chain (client/resource url)
@@ -118,3 +98,5 @@
 
 (defn full-name->repository [full-name]
   (url->repository (str "https://api.github.com/repos/" full-name)))
+
+

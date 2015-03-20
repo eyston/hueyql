@@ -1,9 +1,9 @@
 (ns huql.graph.query
   (:require [instaparse.core :as insta]
             [clojure.set :as set]
-            [clojure.edn :as edn]))
+            [clojure.string :refer [join]]))
 
-(def query-parser
+(def parser
   (insta/parser "ROOT = <whitespace> NAME IDS? FIELDS <whitespace>
                  NAME = token
                  IDS = <whitespace> <'('> ARG (<','> ARG)* <')'> <whitespace>
@@ -17,7 +17,7 @@
                  <token> = #'\\w+'
                  whitespace = #'\\s*'"))
 
-(def query-transform
+(def transform
   (partial insta/transform {:NAME (fn [name] [:name (keyword name)])
                             :IDS (fn [& args] [:ids (vec args)])
                             :ARGS (fn [& args] [:args (vec args)])
@@ -28,128 +28,185 @@
                             :FIELD (fn [& args] (into {} args))
                             :ROOT (fn [& args] (into {} args))}))
 
-(defn walk-query [f query graph field path]
-  (let [path (conj path (name (:name query)))]
-    (if (seq (:fields query))
-      (update-in (f query graph field path) [:fields] (partial mapv (fn [query]
-                                                                      (let [field (get-in graph [:nodes (:type field) :fields (:name query)])]
-                                                                        (walk-query f query graph field path)))))
-      (f query graph field path))))
+(defn parse [string]
+  (-> string
+    parser
+    transform))
 
-(defn complex? [graph field]
-  (contains? (:nodes graph) (:type field)))
+;; validations -- so fucking long and shitty to read
 
-(defn scalar? [graph field]
-  (not (complex? graph field)))
+(defn name->string [item]
+  (name (:name item)))
 
-(defn validate-scalar [query graph field path]
-  (if (and (scalar? graph field) (seq (:fields query)))
-    (throw (Exception. (str "Scalar types cannot have fields. " (clojure.string/join "." path) " type " (:type field) " has invalid fields: " (clojure.string/join ", " (map (comp name :name) (:fields query))) ".")))
-    query))
+(defn path->string [path]
+  (join "." path))
 
-(defn validate-has-fields [query graph field path]
-  (if (and (complex? graph field) (empty? (:fields query)))
-    (throw (Exception. (str "Complex types must have fields. " (clojure.string/join "." path) " type " (:type field) " has no fields.  Valid fields are: " (clojure.string/join ", " (map name (keys (get-in graph [:nodes (:type field) :fields])))))))
-    query))
+(defn parse-scalar [graph field path scalar-name value]
+  (let [scalar (get-in graph [:types scalar-name])]
+    (try
+      ((:parse scalar) value)
+      (catch Exception e
+        (throw (Exception. (str "Invalid argument. " (path->string path) " could not parse '" value "' to type " scalar-name ".")))))))
 
-(defn validate-known-fields [query graph field path]
-  (if (complex? graph field)
-    (let [node (get-in graph [:nodes (:type field)])
-          node-fields (into #{} (keys (:fields node)))
-          query-fields (into #{} (map :name (:fields query)))
-          unknown-fields (set/difference query-fields node-fields)]
-      (if (seq unknown-fields)
-        (throw (Exception. (str "Unknown fields. " (clojure.string/join "." path) " type " (:type field) " has unknown fields: " (clojure.string/join ", " (map name unknown-fields)))))
-        query))
-    query))
+(defn parse-arguments [graph field path query]
+  (let [field-args (:args field)
+        query-args (:args query)]
+    (if (seq field-args)
+      (update-in query [:args] (partial mapv (partial parse-scalar graph field path) field-args))
+      query)))
 
-(defn validate-complex [query graph field path]
-  (-> query
-    (validate-has-fields graph field path)
-    (validate-known-fields graph field path)))
+(defn parse-call-arguments [graph type-call path call]
+  (let [type-args (:args type-call)]
+    (if (seq type-args)
+      (update-in call [:args] (partial mapv (fn [type-arg call-arg]
+                                              (let [scalar (get-in graph [:types type-arg])]
+                                                (try
+                                                  ((:parse scalar) call-arg)
+                                                  (catch Exception e
+                                                    (throw (Exception. (str "Invalid call argument. " (path->string path) " call " (name->string call) " could not parse '" call-arg "' to type " type-arg ".")))))))
+                                       type-args))
+      call)))
 
-(defn coerce-argument [field-arg query-arg]
-  (condp = field-arg
-    'string query-arg
-    'integer (let [i (edn/read-string query-arg)]
-               (if (integer? i)
-                 i
-                 (throw (Exception. "not an integer"))))))
+(defn validate-call-argument-count [type-call path call]
+  (let [type-args (:args type-call)
+        call-args (:args call)]
+    (if (not= (count type-args) (count call-args))
+      (cond
+        (= (count type-args) 0) (throw (Exception. (str "Invalid call arguments. " (path->string path) " call " (name->string call) " takes no arguments but called with: " (join ", " call-args))))
+        (= (count call-args) 0) (throw (Exception. (str "Invalid call arguments. " (path->string path) " call " (name->string call) " takes " (count type-args) " arguments of " (join ", " type-args) " but none were provided.")))
+        :else (throw (Exception. (str "Invalid call arguments. " (path->string path) " call " (name->string call) " takes " (count type-args) " arguments of " (join ", " type-args) " but called with: " (join ", " call-args) "."))))
+      call)))
 
-(defn validate-arguments [query graph field path]
+(defn validate-call [graph type-calls path call]
+  (if-let [type-call (type-calls (:name call))]
+    (->> call
+      (validate-call-argument-count type-call path)
+      (parse-call-arguments graph type-call path))
+    (throw (Exception. (str "Invalid call. " (path->string path) " call " (name->string call) " is not supported.  Valid calls are: " (join ", " (map name (keys type-calls))) ".")))))
+
+(defn validate-field-calls [graph field path query]
+  (let [query-calls (:calls query)]
+    (if (seq query-calls)
+      (let [type (get-in graph [:types (:type field)])
+            type-calls (:calls type)]
+        (if (empty? type-calls)
+          (throw (Exception. (str "Invalid call. " (path->string path) " does not accept calls but called with: " (join ", " (map name->string query-calls)) ".")))
+          (update-in query [:calls] (partial mapv (partial validate-call graph type-calls path)))))
+      query)))
+
+(defn parse-arguments [graph field path query]
+  (let [field-args (:args field)
+        query-args (:args query)]
+    (if (seq field-args)
+      (update-in query [:args] (partial mapv (partial parse-scalar graph field path) field-args))
+      query)))
+
+(defn validate-argument-count [graph field path query]
   (let [field-args (:args field)
         query-args (:args query)]
     (if (not= (count field-args) (count query-args))
       (cond
-        (= (count field-args) 0) (throw (Exception. (str "Unexpected arguments. " (clojure.string/join "." path) " of type " (:type field) " does not take any arguments but called with: " (clojure.string/join ", " query-args) ".")))
-        (= (count query-args) 0) (throw (Exception. (str "Missing arguments. " (clojure.string/join "." path) " of type " (:type field) " requires arguments of " (clojure.string/join ", " field-args) " but none provided.")))
-        :else (throw (Exception. (str "Wrong number of arguments. " (clojure.string/join "." path) " of type " (:type field) " requires " (count field-args) " arguments of " (clojure.string/join ", " field-args) " but called with " (clojure.string/join ", " query-args) "."))))
-      (if (seq field-args)
-        (update-in query [:args] (partial mapv
-                                          (fn [field-arg query-arg]
-                                            (try
-                                              (coerce-argument field-arg query-arg)
-                                              (catch Exception e
-                                                (throw (Exception. (str "Invalid argument. Could not parse '" query-arg "' to type " field-arg " at "  (clojure.string/join "." path) "."))))))
-                                          field-args))
-        query))))
+        (= (count field-args) 0) (throw (Exception. (str "Illegal arguments. " (path->string path) " does not take any arguments but called with: " (join ", " query-args) ".")))
+        (= (count query-args) 0) (throw (Exception. (str "Illegal arguments. " (path->string path) " requires " (count field-args) " arguments of " (join ", " field-args) " but none were provided.")))
+        :else (throw (Exception. (str "Illegal arguments. " (path->string path) " requires " (count field-args) " arguments of " (join ", " field-args) " but was called with " (join ", " query-args) "."))))
+      query)))
 
-(defn validate-ids [query graph field path]
-  (let [field-id (:id field)
-        query-ids (:ids query)]
-    (cond
-      (nil? field-id) (if (seq query-ids)
-                        (throw (Exception. (str "Invalid ids. " (name (:name field)) " does not take ids but was called with ids: " (clojure.string/join ", " query-ids))))
-                        query)
-      (not (coll? field-id)) (condp = (count query-ids)
-                               0 (throw (Exception. (str "Missing id. " (name (:name field)) " takes a single id of type " (:id field) " but none was provided." )))
-                               1 query
-                               (throw (Exception. (str "Wrong number of ids. " (name (:name field)) " takes a single id of type " (:id field) " but called with " (clojure.string/join ", " query-ids)))))
-      (coll? field-id) (condp = (count query-ids)
-                         0 (throw (Exception. (str "Missing id. " (name (:name field)) " takes ids of type " (:id field) " but none was provided." )))
-                         query))))
+(defn validate-field-arguments [graph field path query]
+  (->> query
+    (validate-argument-count graph field path)
+    (parse-arguments graph field path)))
 
-(defn validate-calls [query graph field path]
-  (let [query-calls (:calls query)
-        node-calls (get-in graph [:nodes (:type field) :calls])]
-    (cond
-      (empty? query-calls) query
-      (and (empty? node-calls) (seq query-calls)) (throw (Exception. (str "Invalid calls. " (clojure.string/join "." path) " of type " (:type field) " does not take calls but was called with " (clojure.string/join ", " (map (comp name :name) query-calls)) ".")))
-      :else (update-in query [:calls] (partial mapv (fn [call]
-                                                      (if (contains? node-calls (:name call))
-                                                        (let [query-args (:args call)
-                                                              node-args (:args (node-calls (:name call)))]
-                                                          (if (not= (count node-args) (count query-args))
-                                                            (cond
-                                                              (= (count node-args) 0) (throw (Exception. (str "Unexected arguments. Call " (name (:name call)) " at " (clojure.string/join "." path) " of type " (:type field) " does not take arguments, but called with " (clojure.string/join ", " query-args))))
-                                                              (= (count query-args) 0) (throw (Exception. (str "Missing arguments. Call " (name (:name call)) " at " (clojure.string/join "." path) " of type " (:type field) " requires " (count node-args) " arguments of types " (clojure.string/join ", " node-args) " but was called with no arguments.")))
-                                                              :else (throw (Exception. (str "Wrong number of arguments. Call " (name (:name call)) " at " (clojure.string/join "." path) " of type " (:type field) " requires " (count node-args) " arguments of types " (clojure.string/join ", " node-args) " but was called with " (clojure.string/join ", " query-args) "."))))
-                                                            (if (seq query-args)
-                                                              (update-in call [:args] (partial mapv
-                                                                                               (fn [node-arg query-arg]
-                                                                                                 (try
-                                                                                                   (coerce-argument node-arg query-arg)
-                                                                                                   (catch Exception e
-                                                                                                     (throw (Exception. (str "Invalid arguments. Call " (name (:name call)) " at " (clojure.string/join "." path) " expects " (count node-args) " arguments of types " (clojure.string/join ", " node-args) " but could not parse " query-arg " to type " node-arg "."))))))
-                                                                                               node-args))
-                                                              call)))
-                                                        (throw (Exception. (str "Unknown call. " (clojure.string/join "." path) " of type " (:type field) " does not have a call named " (name (:name call)) ". Supported calls are: " (clojure.string/join ", " (map name (keys node-calls))) "."))))))))))
+(defn validate-field-scalar [graph field path query]
+  (let [fields (:fields query)]
+    (if (seq fields)
+      (throw (Exception. (str "Invalid fields. " (path->string path) " is a scalar which does not support fields, but was queried with fields: " (join ", " (map name->string fields)))))
+      query)))
 
-(defn validate-query
-  ([query graph]
+(defn validate-has-fields [graph field path query]
+  (if (empty? (:fields query))
+    (let [valid-fields (keys (get-in graph [:fields (:type field)]))]
+      (throw (Exception. (str "Invalid fields. " (path->string path) " requires fields but was queried with none.  Valid fields are: " (join ", " (map name valid-fields))))))
+    query))
+
+(defn validate-known-fields [graph field path query]
+  (let [type-name (:type field)
+        type (get-in graph [:types type-name])
+        type-fields (into #{} (keys (get-in graph [:fields type-name])))
+        query-fields (into #{} (map :name (:fields query)))
+        unknown-fields (set/difference query-fields type-fields)]
+    (if (seq unknown-fields)
+      (throw (Exception. (str "Invalid fields. " (path->string path) " has unknown fields: " (join ", " (map name unknown-fields)) ".  Valid fields are: " (join ", " (map name type-fields)) ".")))
+      query)))
+
+(defn validate-fields [graph field path query]
+  ;; TODO: add duplicate field detection
+  (->> query
+    (validate-has-fields graph field path)
+    (validate-known-fields graph field path)))
+
+(defn validate-field-complex [graph field path query]
+  (validate-fields graph field path query))
+
+(defn validate-field-type [graph field path query]
+  (let [type (get-in graph [:types (:type field)])]
+    (condp = (:type/type type)
+      :scalar (validate-field-scalar graph field path query)
+      :complex (validate-field-complex graph field path query))))
+
+(defn validate-field [graph field path query]
+  (->> query
+    (validate-field-type graph field path)
+    (validate-field-arguments graph field path)
+    (validate-field-calls graph field path)))
+
+(defn validate-root-ident [graph root path query]
+  (let [query-ids (:ids query)]
+    (if (seq query-ids)
+      (throw (Exception. (str "Invalid ids. " (name->string root) " does not take ids but was called with: " (join ", " query-ids) ".")))
+      query)))
+
+(defn validate-root-one [graph root path query]
+  (let [query-ids (:ids query)]
+    (condp = (count query-ids)
+      0 (throw (Exception. (str "Invalid id. " (name->string root) " takes a single id of type " (:id root) " but none was provided.")))
+      1 query
+      (throw (Exception. (str "Invalid ids. " (name->string root) " takes a single id of type " (:id root) " but was called with: " (join ", " query-ids) "."))))))
+
+(defn validate-root-many [graph root path query]
+  (let [query-ids (:ids query)]
+    (if (seq query-ids)
+      query
+      (throw (Exception. (str "Invalid ids. " (name->string root) " takes 1 or more ids of type " (:id root) " but none was provided."))))))
+
+(defn validate-root-ids [graph root path query]
+  (condp = (:root/type root)
+    :ident (validate-root-ident graph root path query)
+    :one (validate-root-one graph root path query)
+    :many (validate-root-many graph root path query)))
+
+(defn validate-root [graph root path query]
+  (->> query
+    (validate-root-ids graph root path)
+    (validate-fields graph root path)))
+
+(defn walk-query [f graph field path query]
+  (let [path (conj path (name (:name query)))]
+    (if (seq (:fields query))
+      (update-in (f graph field path query)
+                 [:fields]
+                 (partial mapv (fn [query]
+                                 (let [field (get-in graph [:fields (:type field) (:name query)])]
+                                   (walk-query f graph field path query)))))
+      (f graph field path query))))
+
+(defn validate
+  ([graph query]
    (if (insta/failure? query)
      (throw (Exception. (pr-str (insta/get-failure query))))
      (if-let [root (get-in graph [:roots (:name query)])]
-       (walk-query validate-query query graph root [])
+       (walk-query validate graph root [] query)
        (throw (Exception. (str "Unknown root " (name (:name query)) ". Known roots: " (clojure.string/join ", " (map name (keys (:roots graph)))) "."))))))
-  ([query graph field path]
-   (reduce (fn [query validator]
-             (validator query graph field path))
-           query
-           [validate-scalar validate-complex validate-arguments validate-ids validate-calls])))
-
-(defn parse [graph string]
-  (-> string
-    query-parser
-    query-transform
-    (validate-query graph)))
+  ([graph field path query]
+   (condp = (:graph/type field)
+     :root (validate-root graph field path query)
+     :field (validate-field graph field path query))))

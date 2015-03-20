@@ -9,8 +9,8 @@
 
 		body {
 			font-family: Helvetica, Arial, sans-serif;
-			font-size: 14px;
-			padding: 20px 0;
+			font-size: 20px;
+			font-weight: 100;
 			line-height: 1.4285;
 		}
 
@@ -19,6 +19,8 @@
 		}
 
 		button {
+			font-size: 16px;
+			line-height: 1.4285;
 			display: inline-block;
 			padding: 6px 12px;
 			text-align: center;
@@ -38,36 +40,8 @@
 			outline: none;
 		}
 
-		.query-explorer-container {
-			display: flex;
-			flex-grow: 1;
-		}
-
-		.query-container {
-			flex-grow: 1;
-			padding: 10px;
-		}
-
-		.query-container textarea {
-			width: 100%;
-			height: 500px;
-
-			font-size: 16px;
-			font-family: monospace;
-		}
-
-		.query-container button {
-			float: right;
-		}
-
-		.result-container {
-			flex-grow: 1;
-			display: flex;
-			flex-direction: column;
-			padding: 10px;
-		}
-
 		pre {
+			margin-top: 5px;
 			background-color: ghostwhite;
 			border: 1px solid silver;
 			padding: 10px 20px;
@@ -86,6 +60,7 @@
 		}
 
 		svg {
+			display: block;
 			fill: white;
 		}
 
@@ -116,10 +91,209 @@
 			shape-rendering: crispEdges;
 		}
 
+		header {
+			padding: 50px 0;
+			background-color: #323330;
+		}
+
+		header h1 {
+			font-size: 64px;
+			font-weight: 600;
+			color: #CCFFFF;
+		}
+
+		header h3.disclaimer {
+			font-size: 16px;
+			font-style: italic;
+			font-weight: 100;
+			color: #FFF;
+		}
+
+		#content {
+			margin: 50px 0;
+		}
+
+		#content > p {
+			margin: 15px auto;
+			width: 960px;
+		}
+
+		#content > h3 {
+			margin: 20px auto;
+			width: 960px;
+		}
+
+		#content > p a {
+			color: #FF8000;
+		}
+
+		.query-container {
+            display: flex;
+            flex-direction: row;
+		}
+
+		.query-container > div {
+			padding: 10px;
+		}
+
+		.col33 {
+			width: 33%;
+		}
+
+		.col67 {
+			width: 67%;
+		}
+
+		.query-editor h4 {
+			display: inline-block;
+			padding: 6px 0;
+			font-size: 16px;
+			font-weight: 400;
+		}
+
+		.query-editor button {
+			float: right;
+		}
+
+		.query-editor textarea {
+			margin-top: 5px;
+			width: 100%;
+			height: 400px;
+			font-size: 18px;
+			font-family: monospace;
+		}
+
+		.result-container pre {
+			height: 380px;
+			font-size: 18px;
+			overflow-x: hidden;
+			overflow-y: scroll;
+		}
+
+		.result-container button {
+			margin-right: 5px;
+		}
+
+		.profile-view {
+			height: 400px;
+			overflow: scroll;
+		}
+
+		.error-view {
+			padding: 5px;
+			color: red;
+		}
+
+
 	</style>
 </head>
 <body>
-	<div id="content" />
+	<header>
+		<h1>GithubQL *</h1>
+		<h3 class="disclaimer">* not affiliated with Github or GraphQL in any way, shape, or form.</h3>
+	</header>
+
+	<div id="content">
+
+		<p>Inspired by GraphQL and making use of the wonderful Github API I decided to take a stab implementing a portion of the as-of-yet unreleased GraphQL specification.  This is a query only API and maps to just a subset of Github entities &mdash; namely Users, Organizations, Repositories, and Commits.</p>
+
+		<p>The server is written in Clojure and the source code can be found <a href="https://github.com/eyston/hueyql">here</a>, although it is in no condition to be used for anything other than a technology demo.  This has been a blast to write and want to thank the GraphQL team at Facebook for being so open and helpful.  I can't wait until GraphQL and Relay are out in the world.  API's will get cleaner (no more clientside concerns leaking in) and declarative data requirements will be a boon to both productivity and quality.</p>
+
+		<p>You can drop me a jingle on twitter <a href="https://twitter.com/hueypetersen">@hueypetersen</a> or read a few posts I've done while making this on <a href="http://hueypetersen.com">my blog</a> (although I haven't written about this yet).</p>
+
+		<h3>Simple Queries</h3>
+
+		<p>The simplest query is a single entity with some immediate properties.  Here we are using the Repository root with an id of `facebook/react` and getting just the basic information.</p>
+
+		<div id="simple-query"></div>
+
+		<h3>Nested Results</h3>
+
+		<p>Nested relationships can also be queried.  For example Github Repositories have an Owner which we can include in the query.  This query does not auto-run, click on `RUN` to execute the query.</p>
+
+		<div id="nested-query"></div>
+
+		<p>We don't have to stop at a single nested relationship, we can also look at the Repositorie's Organization in the same query.</p>
+
+		<div id="nested-mult-query"></div>
+
+		<p>Finally, nested objects don't have to be limited to relations.  We can represent a datetime as a nested object even though it is just a string in the Github API.</p>
+
+		<div id="date-query"></div>
+
+		<h3>Nested Collections</h3>
+
+		<p>So far we've only shown one to many relations.  We can also query related collections.  For example we can look at some of the contributors to the React Repository.</p>
+
+		<div id="collection-query"></div>
+
+		<p>In the query for collections we are able to get the count as well as a collection of nodes &mdash; in this case corresponding to a User entity.  We also specify that we only want the first 10.  This is not necessary but if left off we'd get back all contributors which is probably not desirable.  For the purposes of this demo I've also limited the server to returning 50-100 items at max from a collection.  A cursor was also included which can be used for paging (shown later).<p>
+
+		<p>It might also be interesting to look at the profile tab for this query.  Click on the `PROFILE` button to view timing information for the query.  Each piece of data in the query result has timing information associated with it.  The dark blue bar is how long that particular item took to `execute` while the light blue bar is how long it took the full value &mdash; including children &mdash; to evaluate.<p>
+
+		<p>Note that every contributor was fetched in parallel.  We are using Aleph for our HTTP library as well as Manifold for our query execution.  These are two non-blocking API's for Clojure.  Collections are represented as streams and individual items in the stream as deferreds.  This means nothing in execution is blocking and the query can be traversed in parallel.<p>
+
+		<p>Go ahead and bump the number up from 10 to something higher if you'd like.  I have no idea what my rate limiting is for Github but so far have yet to hit it while developing and I've made some terrible, terrible mistakes.</p>
+
+		<h3>Pagination</h3>
+
+		<p>For pagination all that we have to do is grab a cursor and include an `after` call on the contributors.  In GraphQL cursors are opaque objects so can include all kind of smart information to improve pagination.  For my purposes they are dumb ids and we always start at page 1 and just drop until we find the cursor.  So ya ... room for improvement!</p>
+
+		<div id="pagination-query"></div>
+
+		<p>Relay is supposed to make this even easier.  Simply change your `first` count and the proper `after` is created.  Have I mentioned I can't wait?</p>
+
+		<h3>Custom Calls</h3>
+
+		<p>So `first` and `after` are just two examples of calls but each collection can export other calls for use.  For instance Facebook has a call roughly like `birthday_in_range(date1, date2)` which I would presume returns friends with birthdays in the date range given.  I haven't spent much time on this but did create a `starts_with` call as a proof of concept.  This will also introduce the Organization root which does what you might expect.
+
+		<div id="starts-with-query"></div>
+
+		<p>For the curious in the crowd I've implemented calls as transducers.  So as you chain calls they get `comp`d into a single transducer and passed to Manifold to transform the stream.  Right now calls are also order dependent.  Whether these are good ideas is something the people writing the GraphQL spec will answer for me :).<p>
+
+		<h3>Field Arguments</h3>
+
+		<p>Another feature of GraphQL is supplying arguments to a field.  I'm actually not sure if this is implemented the same as a call or not &mdash; again the spec will answer this.  I've implemented them differently than calls.  The only example I have of this is providing a date format string to a date object.</p>
+
+		<div id="date-format-query"></div>
+
+		<p>As trivial of an example as this is I actually think it is pretty useful.  I would use this.</p>
+
+		<h3>Multiple Root Values</h3>
+
+		<p>Everything so far has been a single root value, but we can also request multiple ids at once.</p>
+
+		<div id="multiple-users-query"></div>
+
+		<p>Here we are getting back information on multiple Users as well as their Organizations and Repositories.  This is another fun one to look at the profile graph for.<p>
+
+		<p>I've implemented this as two separate roots &mdash; User and Users.  I'm interested how this ends up working in Relay with a single client side store.</p>
+
+		<h3>Type Inspection</h3>
+
+		<p>GraphQL also supports inspecting objects.  When you define an object you can specify a description, the fields, a description of each field, etc.  I don't support descriptions (well I do, I just don't have any because /effort) but we can still inspect type and field information.</p>
+
+		<div id="type-query"></div>
+
+		<p>This type of schema documentation allows tools to be built up around GraphQL.  Nifty.</p>
+
+		<h3>Validation</h3>
+
+		<p>Each query gets validated before it is executed.  The code that does this is by far my most hated part of the project, but it does produce reasonable error messages.</p>
+
+		<div id="validation-query"></div>
+
+		<p>All bets are off for execution runtime exceptions :)</p>
+
+		<h3>Conclusion</h3>
+
+		<p>This wraps up the tour of my little implemenation.  Thanks again to the GraphQL team.  I seriously can't wait to get my hands on the real stuff.</p>
+
+		<p>I leave you with a query which should without a doubt kill my rate limit.  Enjoy!</p>
+
+		<div id="closing-query"></div>
+
+	</div>
 
 	<script src="/js/d3.min.js"></script>
 	<script src="/js/bundle.js"></script>

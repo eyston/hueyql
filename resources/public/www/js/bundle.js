@@ -5,265 +5,553 @@ var request = require('superagent');
 // http://jsfiddle.net/unLSJ/
 var printer = {};
 printer.json = {
-	replacer: function(match, pIndent, pKey, pVal, pEnd) {
-		var key = '<span class=json-key>';
-		var val = '<span class=json-value>';
-		var str = '<span class=json-string>';
-		var r = pIndent || '';
-		if (pKey)
-			r = r + key + pKey.replace(/[": ]/g, '') + '</span>: ';
-		if (pVal)
-			r = r + (pVal[0] == '"' ? str : val) + pVal + '</span>';
-		return r + (pEnd || '');
-	},
-	prettyPrint: function(obj) {
-		var jsonLine = /^( *)("[\w]+": )?("[^"]*"|[\w.+-]*)?([,[{])?$/mg;
-		return JSON.stringify(obj, null, 3)
-			.replace(/&/g, '&amp;').replace(/\\"/g, '&quot;')
-			.replace(/</g, '&lt;').replace(/>/g, '&gt;')
-			.replace(jsonLine, printer.json.replacer);
-	}
+    replacer: function(match, pIndent, pKey, pVal, pEnd) {
+        var key = '<span class=json-key>';
+        var val = '<span class=json-value>';
+        var str = '<span class=json-string>';
+        var r = pIndent || '';
+        if (pKey)
+            r = r + key + pKey.replace(/[": ]/g, '') + '</span>: ';
+        if (pVal)
+            r = r + (pVal[0] == '"' ? str : val) + pVal + '</span>';
+        return r + (pEnd || '');
+    },
+    prettyPrint: function(obj) {
+        var jsonLine = /^( *)("[\w]+": )?("[^"]*"|[\w.+-]*)?([,[{])?$/mg;
+        return JSON.stringify(obj, null, 3)
+            .replace(/&/g, '&amp;').replace(/\\"/g, '&quot;')
+            .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(jsonLine, printer.json.replacer);
+    }
 };
 
-var query =
-("Users(zpao, leebyron, modocache) {\n\tid,\n\tname,\n\tlogin,\n\tcreated_at {\n\t\tyear,\n\t\tmonth,\n\t\tformat(YYYY-MM-dd)\n\t},\n\torganizations {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tlogin,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
+var QueryEditor = React.createClass({displayName: "QueryEditor",
 
+    handleRun: function (ev) {
+        ev.preventDefault();
 
+        var query = this.refs.query.getDOMNode().value.trim();
 
+        this.props.run(query);
+    },
 
+    render: function () {
+        return (
+            React.createElement("form", {className: "query-editor", onSubmit: this.handleRun}, 
+                React.createElement("button", null, "RUN"), 
+                React.createElement("h4", null, "QUERY"), 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-);
-
-var query =
-("Organizations(facebook, reactjs) {\n\t__type__ {\n\t\tname,\n\t\tdescription,\n\t\tfields {\n\t\t\tname,\n\t\t\ttype\n\t\t}\n\t},\n\tid,\n\tname,\n\trepositories.first(5) {\n\t\tcount,\n\t\tedges {\n\t\t\tnode {\n\t\t\t\tid,\n\t\t\t\tname\n\t\t\t}\n\t\t}\n\t}\n}"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-);
-
-var QueryExplorerContainer = React.createClass({displayName: "QueryExplorerContainer",
-
-	getInitialState: function () {
-		return {
-			result: null,
-			query: query
-		};
-	},
-
-	handleRun: function (ev) {
-		ev.preventDefault();
-
-		var query = this.refs.query.getDOMNode().value.trim();
-
-		this.run(query);
-	},
-
-	run: function (query) {
-		console.log('query', query);
-		request.get('/api/graph').query({query: query, profiled: true}).end(function (res) {
-
-			console.log('response', res);
-
-			if (res.ok) {
-				var result = JSON.parse(res.text);
-				profile = result['profile-data'];
-				delete result['profile-data'];
-
-				this.setState({
-					result: result,
-					profile: profile
-				});
-			} else {
-				this.setState({
-					result: JSON.parse(res.text),
-					profile: []
-				});
-			}
-
-
-		}.bind(this));
-	},
-
-	resultHtml: function () {
-		if (this.state.result) {
-			return printer.json.prettyPrint(this.state.result)
-		}
-	},
-
-	componentWillMount: function () {
-		console.log('gonna mount!');
-
-		this.run(this.state.query);
-	},
-
-	componentDidMount: function() {
-		var el = this.getDOMNode();
-
-		this.createChart(el);
-	},
-
-	componentDidUpdate: function() {
-		var el = this.getDOMNode();
-		this.updateChart(el, this.state.profile);
-	},
-
-	createChart: function (el) {
-		var chart = d3.select(el).select('svg').attr('width', 800)
-			.append('g').attr('transform', 'translate(10, 10)');
-
-		chart.append('g')
-			.attr('class', 'x axis')
-			.attr('transform', 'translate(200, 20)')
-
-		chart.append('g')
-			.attr('class', 'bars')
-			.attr('transform', 'translate(0, 30)')
-	},
-
-	updateChart: function (el, data) {
-		var barHeight = 20;
-
-		var chart = d3.select(el).select('svg').attr('height', barHeight * data.length + 100).select('g');
-
-		data.sort(function (a, b) {
-			if (a.start > b.start) {
-				return 1;
-			}
-
-			if (a.start < b.start) {
-				return -1;
-			}
-
-			return 0;
-		});
-
-		function appendChildren(acc, path, data) {
-			var children = data.filter(function (d) {
-				return d.parent === path;
-			});
-
-			children.forEach(function (d) {
-				acc.push(d);
-				appendChildren(acc, d.path, data);
-			});
-
-			return acc;
-		}
-
-		data = appendChildren([], "[]", data);
-
-		var start = d3.min(data, function (d) { return d.start; });
-		var end = d3.max(data, function (d) { return d.end; });
-
-		var x = d3.scale.linear()
-			.domain([0, end - start])
-			.range([0, 500]);
-
-		var axis = d3.svg.axis()
-			.scale(x)
-			.orient('top');
-
-		chart.select('.x.axis').call(axis);
-
-		var bars = chart.select('.bars').selectAll('.bar').data(data);
-
-		bars.exit().remove();
-
-		var barEnter = bars.enter().append('g').attr('class', 'bar');
-
-		barEnter.append('rect')
-			.attr('class', 'end')
-			.attr('transform', 'translate(200, 0)')
-			.attr('height', barHeight / 2);
-
-		barEnter.append('rect')
-			.attr('class', 'execute')
-			.attr('transform', 'translate(200, 0)')
-			.attr('height', barHeight / 2);
-
-		barEnter.append('text')
-			.attr('x', 0)
-			.attr('y', 7.5);
-
-		bars.attr('transform', function (d, i) { return 'translate(0, ' + i * barHeight + ')'; });
-
-		bars.select('rect.end')
-			.attr('x', function (d) { return x(d.start - start); })
-			.attr('width', function (d) { return d3.max([x(d.end - d.start), 1]); })
-
-		bars.select('rect.execute')
-			.attr('x', function (d) { return x(d.start - start); })
-			.attr('width', function (d) { return d3.max([x(d.execute - d.start), 1]); })
-
-		bars.select('text')
-			.text(function (d) { return d.path; })
-
-	},
-
-	render: function () {
-
-		return (
-			React.createElement("div", null, 
-				React.createElement("header", null, 
-					React.createElement("h1", null, "GithubQL"), 
-					React.createElement("p", null, "This is just screwing around on mapping a GraphQL'ish type thing to the Github API."), 
-					React.createElement("p", null, "I have no idea if anything will work other than this default query :)"), 
-					React.createElement("p", null, "Only a few roots work and very few fields are supported on each node, including no `__type__` support."), 
-					React.createElement("p", null, "Not all requests are non-blocking at the moment which you can notice in the profile graph at the bottom.")
-				), 
-				React.createElement("div", {className: "query-explorer-container"}, 
-					React.createElement("div", {className: "query-container"}, 
-						React.createElement("button", {onClick: this.handleRun}, "Run"), 
-						React.createElement("h2", null, "Query"), 
-
-						React.createElement("textarea", {defaultValue: this.state.query, ref: "query"})
-					), 
-					React.createElement("div", {className: "result-container"}, 
-						React.createElement("h2", null, "Result"), 
-						React.createElement("pre", {dangerouslySetInnerHTML: {__html: this.resultHtml()}}), 
-						React.createElement("h2", null, "Profile"), 
-						React.createElement("svg", null)
-					)
-				)
-			)
-		);
-	}
+                React.createElement("textarea", {defaultValue: this.props.query, ref: "query"})
+            )
+        );
+    }
 
 });
 
+var ResultView = React.createClass({displayName: "ResultView",
+
+    resultHtml: function () {
+        if (this.props.result) {
+            return printer.json.prettyPrint(this.props.result)
+        }
+    },
+
+    render: function () {
+        return (React.createElement("pre", {dangerouslySetInnerHTML: {__html: this.resultHtml()}}));
+    }
+});
+
+var ProfileView = React.createClass({displayName: "ProfileView",
+
+    componentDidMount: function() {
+        var el = this.getDOMNode();
+
+        this.createChart(el);
+        this.updateChart(el, this.props.profile);
+    },
+
+    componentDidUpdate: function() {
+        var el = this.getDOMNode();
+        this.updateChart(el, this.props.profile);
+    },
+
+    createChart: function (el) {
+        var chart = d3.select(el).select('svg').attr('width', 800)
+            .append('g').attr('transform', 'translate(10, 10)');
+
+        chart.append('g')
+            .attr('class', 'x axis')
+            .attr('transform', 'translate(200, 20)')
+
+        chart.append('g')
+            .attr('class', 'bars')
+            .attr('transform', 'translate(0, 30)')
+    },
+
+    updateChart: function (el, data) {
+        console.log('data', data);
+        var barHeight = 20;
+
+        var chart = d3.select(el).select('svg').attr('height', barHeight * data.length + 50).select('g');
+
+        data.sort(function (a, b) {
+            if (a.start > b.start) {
+                return 1;
+            }
+
+            if (a.start < b.start) {
+                return -1;
+            }
+
+            return 0;
+        });
+
+        function appendChildren(acc, path, data) {
+            var children = data.filter(function (d) {
+                return d.parent === path;
+            });
+
+            children.forEach(function (d) {
+                acc.push(d);
+                appendChildren(acc, d.path, data);
+            });
+
+            return acc;
+        }
+
+        data = appendChildren([], "[]", data);
+
+        var start = d3.min(data, function (d) { return d.start; });
+        var end = d3.max(data, function (d) { return d.end; });
+
+        var x = d3.scale.linear()
+            .domain([0, end - start])
+            .range([0, 500]);
+
+        var axis = d3.svg.axis()
+            .scale(x)
+            .orient('top');
+
+        chart.select('.x.axis').call(axis);
+
+        var bars = chart.select('.bars').selectAll('.bar').data(data);
+
+        bars.exit().remove();
+
+        var barEnter = bars.enter().append('g').attr('class', 'bar');
+
+        barEnter.append('rect')
+            .attr('class', 'end')
+            .attr('transform', 'translate(200, 0)')
+            .attr('height', barHeight / 2);
+
+        barEnter.append('rect')
+            .attr('class', 'execute')
+            .attr('transform', 'translate(200, 0)')
+            .attr('height', barHeight / 2);
+
+        barEnter.append('text')
+            .attr('x', 0)
+            .attr('y', 7.5);
+
+        bars.attr('transform', function (d, i) { return 'translate(0, ' + i * barHeight + ')'; });
+
+        bars.select('rect.end')
+            .attr('x', function (d) { return x(d.start - start); })
+            .attr('width', function (d) { return d3.max([x(d.end - d.start), 1]); })
+
+        bars.select('rect.execute')
+            .attr('x', function (d) { return x(d.start - start); })
+            .attr('width', function (d) { return d3.max([x(d.execute - d.start), 1]); })
+
+        bars.select('text')
+            .text(function (d) { return d.path; })
+
+    },
+
+    render: function () {
+        return (
+            React.createElement("div", {className: "profile-view"}, 
+                React.createElement("svg", null)
+            )
+        );
+    }
+
+});
+
+var ResultContainer = React.createClass({displayName: "ResultContainer",
+
+    onSetResult: function (ev) {
+        ev.preventDefault();
+        this.props.setResultTab("result");
+    },
+
+    onSetProfile: function (ev) {
+        ev.preventDefault();
+        this.props.setResultTab("profile");
+    },
+
+    render: function () {
+        var view;
+
+        if (this.props.error) {
+            view = (React.createElement("div", {className: "error-view"}, this.props.error));
+        } else {
+            view = this.props.resultTab === "profile"
+                ? (React.createElement(ProfileView, {profile: this.props.profile}))
+                : (React.createElement(ResultView, {result: this.props.result}));
+        }
+
+        return (
+            React.createElement("div", {className: "result-container"}, 
+                React.createElement("button", {onClick: this.onSetResult}, "RESULT"), 
+                React.createElement("button", {onClick: this.onSetProfile}, "PROFILE"), 
+                view
+            )
+        );
+    }
+
+});
+
+var QueryExampleContainer = React.createClass({displayName: "QueryExampleContainer",
+
+    getInitialState: function () {
+        return {
+            query: queries[this.props.initialQuery] || "",
+            resultTab: this.props.initialResultTab || "result"
+        };
+    },
+
+    componentWillMount: function () {
+        if (this.props.autorun) {
+            this.run(this.state.query);
+        }
+    },
+
+    run: function (query) {
+        request.get('/api/graph').query({query: query}).end(function (res) {
+
+            if (res.ok) {
+                var result = JSON.parse(res.text);
+                profile = result['profile-data'];
+                delete result['profile-data'];
+
+                this.setState({
+                    query: query,
+                    result: result,
+                    profile: profile,
+                    error: null
+                });
+            } else {
+                this.setState({
+                    query: query,
+                    result: null,
+                    error: res.text ? JSON.parse(res.text) : "Unknown error :(",
+                    profile: []
+                });
+            }
+
+
+        }.bind(this));
+    },
+
+    setResultTab: function (tab) {
+        this.setState({
+            resultTab: tab
+        });
+    },
+
+    render: function () {
+        return (
+            React.createElement("div", {className: "query-container"}, 
+                React.createElement("div", {className: "col33"}, 
+                    React.createElement(QueryEditor, {query: this.state.query, run: this.run})
+                ), 
+                React.createElement("div", {className: "col67"}, 
+                    React.createElement(ResultContainer, {
+                        result: this.state.result, 
+                        profile: this.state.profile, 
+                        error: this.state.error, 
+                        resultTab: this.state.resultTab, 
+                        setResultTab: this.setResultTab})
+                )
+            )
+        )
+    }
+});
+
+var queries = {
+    simple: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    private,\n    html_url,\n    description,\n    fork,\n    url,\n    homepage,\n    open_issues,\n    default_branch\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    nested: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    description,\n    owner {\n        id,\n        login,\n        type\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+),
+    nestedmult: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    description,\n    owner {\n        id,\n        login,\n        type\n    },\n    organization {\n        id,\n        name,\n        login,\n        location,\n        type,\n        url\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    nestedDate: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    description,\n    created_at {\n        month,\n        day,\n        year\n    },\n    updated_at {\n        month,\n        day,\n        year\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    collection: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    description,\n    contributors.first(10) {\n        count,\n        edges {\n            cursor,\n            node {\n                id,\n                name,\n                login\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    pagination: ("\nRepository(facebook/react) {\n    id,\n    name,\n    full_name,\n    description,\n    contributors.after(197597).first(10) {\n        count,\n        edges {\n            cursor,\n            node {\n                id,\n                name,\n                login\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    startswith: ("\nOrganization(facebook) {\n    id,\n    name,\n    login,\n    description,\n    repositories.starts_with(r).first(5) {\n        edges {\n            node {\n                id,\n                name,\n                full_name,\n                description\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    dateformat: ("\nUser(zpao) {\n    id,\n    name,\n    login,\n    location,\n    created_at {\n        month,\n        day,\n        year,\n        format(YYYY-MM-dd)\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+),
+    multipleusers: ("\nUsers(zpao, modocache, leebyron) {\n    id,\n    name,\n    login,\n    location,\n    repositories.first(5) {\n        count,\n        edges {\n            node {\n                id,\n                full_name\n            }\n        }\n    },\n    organizations.first(5) {\n        count,\n        edges {\n            node {\n                id,\n                name\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    type: ("\nRepository(facebook/react) {\n    __type__ {\n        name,\n        description,\n        fields {\n            name,\n            type,\n            description\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+),
+    validation: ("\nUser(zpao) {\n    id,\n    name,\n    repositories {\n        count,\n        edges {\n            cursor,\n            node {\n                id,\n                name,\n                fake_field\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+),
+    closing: ("\nUser(zpao) {\n    login,\n    id,\n    avatar_url,\n    gravatar_id,\n    url,\n    html_url,\n    followers.first(5) { count, edges { cursor, node { id, name, login } } },\n    following.first(5) { count, edges { cursor, node { id, name, login } } },\n    starred.first(5) { count, edges { cursor, node { id, name, full_name } } },\n    subscriptions.first(5) { count, edges { cursor, node { id, name, full_name } } },\n    repositories.first(5) { count, edges { cursor, node { id, name, full_name } } },\n    type,\n    site_admin,\n    name,\n    company,\n    blog,\n    location,\n    email,\n    hireable,\n    bio,\n    created_at { month, day, year },\n    updated_at { month, day, year }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+)
+
+};
+
+
 React.render(
-	React.createElement(QueryExplorerContainer, null),
-	document.getElementById('content')
+    React.createElement(QueryExampleContainer, {initialQuery: "simple", initialResultTab: "result", autorun: true}),
+    document.getElementById('simple-query')
 );
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "nested"}),
+    document.getElementById('nested-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "nestedmult"}),
+    document.getElementById('nested-mult-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "nestedDate"}),
+    document.getElementById('date-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "collection"}),
+    document.getElementById('collection-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "pagination"}),
+    document.getElementById('pagination-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "startswith"}),
+    document.getElementById('starts-with-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "dateformat"}),
+    document.getElementById('date-format-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "multipleusers"}),
+    document.getElementById('multiple-users-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "type"}),
+    document.getElementById('type-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "validation"}),
+    document.getElementById('validation-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "closing"}),
+    document.getElementById('closing-query')
+);
+
 
 
 },{"react":"/Users/huey/scratch/huql/client/node_modules/react/react.js","superagent":"/Users/huey/scratch/huql/client/node_modules/superagent/lib/client.js"}],"/Users/huey/scratch/huql/client/node_modules/browserify/node_modules/process/browser.js":[function(require,module,exports){

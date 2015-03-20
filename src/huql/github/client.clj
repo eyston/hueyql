@@ -40,23 +40,25 @@
    (http-get url nil))
   ([url options]
    (prn [:get url options])
-   (let [out (chan)
-         options (deep-merge options {:middleware wrap-links
+   (let [options (deep-merge options {:middleware wrap-links
                                       :headers {"User-Agent" "HuQL"}
                                       :query-params {"client_id" (env :github-client-id)
                                                      "client_secret" (env :github-client-secret)}})]
-     (-> (http/get url options)
-       (d/chain (fn [x]
-                  (go
-                    (>! out (update-in x [:body] bytes->json)))))
-       (d/catch (fn [e]
-                  (go (>! out e))))
-       (d/finally #(close! out)))
-     out)))
+     
+     (d/chain (http/get url options)
+              (fn [x]
+                (update-in x [:body] bytes->json))))))
 
 (defn resource [url]
-  (go
-    (:body (<! (http-get url)))))
+  (d/chain (http-get url)
+           :body))
+
+(defn deferred->chan [d]
+  (let [c (chan)]
+    (-> d
+      (d/chain (fn [x] (go (>! c x))))
+      (d/catch (fn [e] (go (>! c e)))))
+    c))
 
 (defn paged-resources
   ([url]
@@ -64,7 +66,7 @@
   ([url page]
    (let [out (chan)]
      (go-loop [page page]
-       (let [response (<! (http-get url {:query-params {"page" page}}))
+       (let [response (<! (deferred->chan (http-get url {:query-params {"page" page}})))
              resources (:body response)]
          (if (seq resources)
            (let [paged-resources (map (fn [r] {:resource r :page page}) resources)]
@@ -73,6 +75,22 @@
            (close! out))))
      (async/pipe out (chan 1 (take LIMIT))))))
 
+;;;; stream version -- eager fetches a few pages
+;;;; I like this version better but worried about API rate limiting atm!
+;; (defn paged-resources
+;;   ([url]
+;;    (paged-resources url 1))
+;;   ([url page]
+;;    (->> (iterate inc page)
+;;      (map (fn [page]
+;;             (d/chain (http-get url {:query-params {"page" page}})
+;;                      :body)))
+;;      s/->source
+;;      s/realize-each
+;;      (s/map s/->source)
+;;      s/concat
+;;      (s/transform (take LIMIT)))))
+
 (defn resources
   ([url]
    (resources url 1))
@@ -80,9 +98,8 @@
    (async/pipe (paged-resources url page) (chan 1 (map :resource)))))
 
 (defn resources-count [url]
-  (go
-    (let [response (<! (http-get url {:query-params {"per_page" 1}}))]
-      (if-let [last-page (get-in response [:links :last :href])]
-        (or (Integer/parseInt (second (re-find #"[\&\?]page=(\d+)?" last-page)))
-            (count (:body response)))
-        (count (:body response))))))
+  (d/let-flow [response (http-get url {:query-params {"per_page" 1}})]
+              (if-let [last-page (get-in response [:links :last :href])]
+                (or (Integer/parseInt (second (re-find #"[\&\?]page=(\d+)?" last-page)))
+                    (count (:body response)))
+                (count (:body response)))))
