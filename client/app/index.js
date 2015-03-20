@@ -486,6 +486,39 @@ User(zpao) {
     bio,
     created_at { month, day, year },
     updated_at { month, day, year }
+}`,
+    facebook: `
+Facebook {
+    id,
+    name,
+    login,
+    description,
+    location,
+    public_members.first(10) {
+        count,
+        edges {
+            cursor,
+            node {
+                id,
+                name,
+                location,
+                repositories {
+                    count
+                }
+            }
+        }
+    },
+    repositories.first(10) {
+        count,
+        edges {
+            cursor,
+            node {
+                id,
+                name,
+                full_name
+            }
+        }
+    }
 }`
 
 };
@@ -549,5 +582,10 @@ React.render(
 React.render(
     <QueryExampleContainer initialQuery={"closing"} />,
     document.getElementById('closing-query')
+);
+
+React.render(
+    <QueryExampleContainer initialQuery={"facebook"} />,
+    document.getElementById('facebook-query')
 );
 

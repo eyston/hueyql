@@ -487,6 +487,39 @@ var queries = {
 
 
 
+),
+    facebook: ("\nFacebook {\n    id,\n    name,\n    login,\n    description,\n    location,\n    public_members.first(10) {\n        count,\n        edges {\n            cursor,\n            node {\n                id,\n                name,\n                location,\n                repositories {\n                    count\n                }\n            }\n        }\n    },\n    repositories.first(10) {\n        count,\n        edges {\n            cursor,\n            node {\n                id,\n                name,\n                full_name\n            }\n        }\n    }\n}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 )
 
 };
@@ -550,6 +583,11 @@ React.render(
 React.render(
     React.createElement(QueryExampleContainer, {initialQuery: "closing"}),
     document.getElementById('closing-query')
+);
+
+React.render(
+    React.createElement(QueryExampleContainer, {initialQuery: "facebook"}),
+    document.getElementById('facebook-query')
 );
 
 

@@ -269,6 +269,14 @@
 
 		<p>I've implemented this as two separate roots &mdash; User and Users.  I'm interested how this ends up working in Relay with a single client side store.</p>
 
+		<h3>Identity Roots</h3>
+
+		<p>Not all roots need to be parameterized.  For example Facebook has one called Viewer which corresponds to the current user.  I don't have a similar usecase but for giggles I made a Facebook root which corresponds to the Facebook Organization.</p>
+
+		<div id="facebook-query"></div>
+
+		<p>It is identical in structure to a query result from `Organization(facebook)`.</p>
+
 		<h3>Type Inspection</h3>
 
 		<p>GraphQL also supports inspecting objects.  When you define an object you can specify a description, the fields, a description of each field, etc.  I don't support descriptions (well I do, I just don't have any because /effort) but we can still inspect type and field information.</p>
